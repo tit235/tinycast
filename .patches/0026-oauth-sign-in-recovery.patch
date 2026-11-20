@@ -1,0 +1,227 @@
+diff --git a/Scripts/raycast-runtime/fixtures.mjs b/Scripts/raycast-runtime/fixtures.mjs
+index 08650407..88b8c72b 100644
+--- a/Scripts/raycast-runtime/fixtures.mjs
++++ b/Scripts/raycast-runtime/fixtures.mjs
+@@ -483,6 +483,18 @@ export default async function Command() {
+ }
+ `;
+ 
++const oauthQueueSource = `
++import { OAuth } from "@raycast/api";
++
++export default async function Command() {
++  const client = new OAuth.PKCEClient({ redirectMethod: OAuth.RedirectMethod.Web, providerName: "GitHub" });
++  const settle = (promise) => promise.then((value) => ({ value }), (error) => ({ error: error.message }));
++  const first = settle(client.authorize({ url: "https://auth.example.test/first" }));
++  const second = settle(client.authorize({ url: "https://auth.example.test/second" }));
++  globalThis.__oauthQueue = Promise.all([first, second]);
++}
++`;
++
+ const formDataSource = `
+ export default async function Command() {
+   const form = new FormData();
+@@ -1362,6 +1374,31 @@ export async function runFixtures() {
+     },
+   );
+ 
++  const queuedSignIns = [];
++  let cancelFirst;
++  await run(
++    "concurrent OAuth sign-ins run one after another and a cancelled one settles",
++    oauthQueueSource,
++    "no-view",
++    async (harness) => {
++      check("only the first sign-in opens the browser", queuedSignIns.length === 1, JSON.stringify(queuedSignIns));
++      cancelFirst(new Error("Sign-in was cancelled."));
++      const [first, second] = await harness.call("globalThis.__oauthQueue");
++      check("a cancelled sign-in rejects with the host's error", first?.error?.includes("Sign-in was cancelled."), JSON.stringify(first));
++      check("the next sign-in starts after the failure", queuedSignIns.length === 2 && queuedSignIns[1].endsWith("/second"), JSON.stringify(queuedSignIns));
++      check("the queued sign-in still succeeds", second?.value?.authorizationCode === "code-2", JSON.stringify(second));
++    },
++    {
++      stubs: {
++        "oauth.authorize": ([url]) => {
++          queuedSignIns.push(url);
++          if (queuedSignIns.length === 1) return new Promise((_, reject) => (cancelFirst = reject));
++          return "raycast://oauth?code=code-2";
++        },
++      },
++    },
++  );
++
+   const formPosts = [];
+   await run(
+     "FormData holds entries and serialises as multipart",
+diff --git a/Scripts/raycast-runtime/src/api/oauth.js b/Scripts/raycast-runtime/src/api/oauth.js
+index db23b69a..fb01aae8 100644
+--- a/Scripts/raycast-runtime/src/api/oauth.js
++++ b/Scripts/raycast-runtime/src/api/oauth.js
+@@ -18,6 +18,15 @@ const redirects = {
+ 
+ const expiryMarginSeconds = 10;
+ 
++// The host runs one browser sign-in at a time, so concurrent authorize() calls take turns.
++let authorizationQueue = Promise.resolve();
++
++function authorizeInBrowser(url, scheme) {
++  const result = authorizationQueue.then(() => hostCall("oauth", "authorize", [url, scheme]));
++  authorizationQueue = result.then(() => {}, () => {});
++  return result;
++}
++
+ const randomURLSafe = (size) => nodeModules.crypto.randomBytes(size).toString("base64url");
+ 
+ // The hosted redirect page reads its target scheme out of `state`, so it must be encoded JSON.
+@@ -72,7 +81,7 @@ class PKCEClient {
+   async authorize(request) {
+     const url = typeof request.toURL === "function" ? request.toURL() : request.url;
+     const sentState = new URL(url).searchParams.get("state");
+-    const redirect = await hostCall("oauth", "authorize", [url, redirects[this.redirectMethod].scheme]);
++    const redirect = await authorizeInBrowser(url, redirects[this.redirectMethod].scheme);
+     const params = new URL(redirect).searchParams;
+     const error = params.get("error");
+     if (error) throw new Error(params.get("error_description") ?? error);
+diff --git a/Tests/ExtensionSignInTests.swift b/Tests/ExtensionSignInTests.swift
+index 2c6c2e52..c2dfd44b 100644
+--- a/Tests/ExtensionSignInTests.swift
++++ b/Tests/ExtensionSignInTests.swift
+@@ -35,6 +35,7 @@ struct ExtensionSignInTests {
+         await browserCompletion()
+         await cancellationBeforeStart()
+         await cancellationDuringSignIn()
++        await retryAfterCancellation()
+         print("\(passes) passed, \(failures) failed")
+         if failures > 0 { exit(1) }
+     }
+@@ -131,4 +132,37 @@ struct ExtensionSignInTests {
+         await Task.yield()
+         expect(exited, "late browser callbacks do not resume the caller again")
+     }
++
++    /// A stale callback from the cancelled attempt's browser must never resolve the retry it left
++    /// running — only the browser the retry itself opened can finish it.
++    static func retryAfterCancellation() async {
++        var browser: BrowserSession?
++        let signIn = ExtensionSignInSession { _, _, completion in
++            let session = BrowserSession(completion: completion)
++            browser = session
++            return session
++        }
++        let task = Task { try await signIn.run(url: url, callbackScheme: "raycast") }
++        while browser == nil { await Task.yield() }
++        let abandoned = browser
++        task.cancel()
++        _ = try? await task.value
++
++        browser = nil
++        let retry = Task { try await signIn.run(url: url, callbackScheme: "raycast") }
++        while browser == nil { await Task.yield() }
++        let retryBrowser = browser
++        let stale = URL(string: "raycast://oauth?code=stale")!
++        abandoned?.completion(stale, nil)
++        await Task.yield()
++        retryBrowser?.completion(redirect, nil)
++        do {
++            let result = try await retry.value
++            expect(
++                result == redirect,
++                "the abandoned browser's stale callback must not resolve the retry")
++        } catch {
++            expect(false, "the abandoned browser's callback must not fail the retry")
++        }
++    }
+ }
+diff --git a/Tinycast/Features/Extensions/Service/ExtensionSignInSession.swift b/Tinycast/Features/Extensions/Service/ExtensionSignInSession.swift
+index cecf8210..48c8ba44 100644
+--- a/Tinycast/Features/Extensions/Service/ExtensionSignInSession.swift
++++ b/Tinycast/Features/Extensions/Service/ExtensionSignInSession.swift
+@@ -22,8 +22,6 @@ final class ExtensionSignInSession: NSObject, ASWebAuthenticationPresentationCon
+ 
+     private nonisolated let anchor: ASPresentationAnchor
+     private let makeSession: SessionFactory
+-    private var session: ASWebAuthenticationSession?
+-    private var continuation: CheckedContinuation<URL, any Error>?
+ 
+     init(
+         makeSession: @escaping SessionFactory = { url, scheme, completion in
+@@ -35,50 +33,58 @@ final class ExtensionSignInSession: NSObject, ASWebAuthenticationPresentationCon
+         self.makeSession = makeSession
+     }
+ 
+-    /// Resolves with the redirect URL; cancelling the task closes the browser window.
++    /// Resolves with the redirect URL; cancelling the task closes the browser window. `pending` is
++    /// scoped to this call, so a stale callback from an abandoned browser cannot finish a later retry.
+     func run(url: URL, callbackScheme: String) async throws -> URL {
++        let pending = Pending()
+         let redirect = try await withTaskCancellationHandler {
+             try Task.checkCancellation()
+             return try await withCheckedThrowingContinuation { continuation in
+-                self.continuation = continuation
+-                let session = makeSession(url, callbackScheme) { [weak self] redirect, error in
++                pending.continuation = continuation
++                let session = makeSession(url, callbackScheme) { [pending] redirect, error in
+                     Task { @MainActor in
+                         if let redirect {
+-                            self?.finish(.success(redirect))
++                            pending.finish(.success(redirect))
+                         } else if let error,
+                             (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin
+                         {
+-                            self?.finish(.failure(error))
++                            pending.finish(.failure(error))
+                         } else {
+-                            self?.finish(.failure(Failure.cancelled))
++                            pending.finish(.failure(Failure.cancelled))
+                         }
+                     }
+                 }
+                 session.presentationContextProvider = self
+-                self.session = session
+-                if !session.start() { finish(.failure(Failure.couldNotStart)) }
++                pending.session = session
++                if !session.start() { pending.finish(.failure(Failure.couldNotStart)) }
+             }
+         } onCancel: {
+-            Task { @MainActor in self.cancel() }
++            Task { @MainActor in pending.cancel() }
+         }
+         try Task.checkCancellation()
+         return redirect
+     }
+ 
+-    private func cancel() {
+-        let session = session
+-        finish(.failure(CancellationError()))
+-        session?.cancel()
++    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
++        anchor
+     }
+ 
+-    private func finish(_ result: Result<URL, any Error>) {
+-        let continuation = continuation
+-        self.continuation = nil
+-        session = nil
+-        continuation?.resume(with: result)
+-    }
++    @MainActor
++    private final class Pending {
++        var continuation: CheckedContinuation<URL, any Error>?
++        var session: ASWebAuthenticationSession?
+ 
+-    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+-        anchor
++        func finish(_ result: Result<URL, any Error>) {
++            let continuation = continuation
++            self.continuation = nil
++            session = nil
++            continuation?.resume(with: result)
++        }
++
++        func cancel() {
++            let session = session
++            finish(.failure(CancellationError()))
++            session?.cancel()
++        }
+     }
+ }

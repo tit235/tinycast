@@ -1,0 +1,109 @@
+diff --git a/Tinycast/Features/WindowSwitcher/UI/WindowSwitchList.swift b/Tinycast/Features/WindowSwitcher/UI/WindowSwitchList.swift
+index b002dd66..6cd2b85f 100644
+--- a/Tinycast/Features/WindowSwitcher/UI/WindowSwitchList.swift
++++ b/Tinycast/Features/WindowSwitcher/UI/WindowSwitchList.swift
+@@ -16,8 +16,11 @@ struct WindowSwitchList: View {
+         ScrollViewReader { proxy in
+             ScrollView {
+                 LazyVStack(spacing: 0) {
+-                    ForEach(entries) { entry in
+-                        WindowSwitchRow(entry: entry, selected: entry.id == selectedID)
++                    ForEach(entries.indices, id: \.self) { index in
++                        let entry = entries[index]
++                        WindowSwitchRow(
++                            entry: entry, selected: entry.id == selectedID,
++                            slot: NumberSlots.digit(at: index))
+                             .selectionFrame(entry.id == selectedID)
+                             .contentShape(Rectangle())
+                             .onTapGesture { onActivate(entry) }
+@@ -38,9 +41,11 @@ struct WindowSwitchList: View {
+ 
+ private struct WindowSwitchRow: View {
+ 
++    @Environment(PaletteState.self) private var palette
+     @Environment(\.metrics) private var metrics
+     let entry: WindowSwitchEntry
+     let selected: Bool
++    let slot: Character?
+     @State private var hovered = false
+ 
+     private var fill: Color {
+@@ -70,10 +75,17 @@ private struct WindowSwitchRow: View {
+                 .lineLimit(1)
+                 .truncationMode(.middle)
+             Spacer(minLength: metrics.spacing.md)
+-            Text(trailing)
+-                .font(metrics.typography.rowTrailing)
+-                .foregroundStyle(.secondary)
+-                .lineLimit(1)
++            if let slot, palette.commandHeld {
++                HStack(spacing: metrics.spacing.xxs) {
++                    KeyCapChip(text: "⌘", style: .outline)
++                    KeyCapChip(text: String(slot), style: .outline)
++                }
++            } else {
++                Text(trailing)
++                    .font(metrics.typography.rowTrailing)
++                    .foregroundStyle(.secondary)
++                    .lineLimit(1)
++            }
+         }
+         .padding(.horizontal, metrics.spacing.md)
+         .padding(.vertical, metrics.spacing.sm)
+diff --git a/Tinycast/Features/WindowSwitcher/UI/WindowSwitchScreen.swift b/Tinycast/Features/WindowSwitcher/UI/WindowSwitchScreen.swift
+index 537386d5..746566b0 100644
+--- a/Tinycast/Features/WindowSwitcher/UI/WindowSwitchScreen.swift
++++ b/Tinycast/Features/WindowSwitcher/UI/WindowSwitchScreen.swift
+@@ -76,6 +76,11 @@ struct WindowSwitchScreen: PaletteScreen {
+     }
+ 
+     func perform(_ shortcut: PaletteShortcut, at selection: Int) -> Bool {
++        if case .numberSlot(let index) = shortcut {
++            guard rows.indices.contains(index) else { return false }
++            core.windowSwitchCoordinator.activate(rows[index])
++            return true
++        }
+         guard let entry = entry(at: selection) else { return false }
+         let coordinator = core.windowSwitchCoordinator
+         switch shortcut {
+diff --git a/Tinycast/Palette/PalettePanel.swift b/Tinycast/Palette/PalettePanel.swift
+index e9aa66bc..1713c7b2 100644
+--- a/Tinycast/Palette/PalettePanel.swift
++++ b/Tinycast/Palette/PalettePanel.swift
+@@ -229,7 +229,8 @@ final class PalettePanel: NSPanel, AnimatedPanel {
+         }
+         if event.type == .keyDown, !event.isARepeat,
+             event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
+-            paletteState?.mode == .launcher || paletteState?.mode == .clipboard,
++            paletteState?.mode == .launcher || paletteState?.mode == .clipboard
++                || paletteState?.mode == .switchWindows,
+             paletteState?.menuOpen != true, paletteState?.isControlListOpen != true,
+             fieldEditor?.hasMarkedText() != true,
+             let index = NumberSlots.index(forKeyCode: event.keyCode), let onNumberSlot
+diff --git a/docs/features/navigation.md b/docs/features/navigation.md
+index 92089c91..9573207f 100644
+--- a/docs/features/navigation.md
++++ b/docs/features/navigation.md
+@@ -101,6 +101,9 @@ modifiers are the ones that count, so letting go of ⇧ alone mid-walk switches
+ searches; Escape hides the palette, and the next modifier change finds it gone and switches
+ nothing.
+ 
++The physical number-row shortcuts ⌘1…⌘9 and ⌘0 activate the first ten filtered windows in display
++order. Holding ⌘ shows each row's shortcut in place of its app label; a missing slot does nothing.
++
+ ## Raising
+ 
+ `activate` un-minimizes if it has to, raises the window inside its app, sets `AXFrontmost`, then calls
+diff --git a/Tests/PaletteMenuClickTests.swift b/Tests/PaletteMenuClickTests.swift
+index 47275e29..34a1de54 100644
+--- a/Tests/PaletteMenuClickTests.swift
++++ b/Tests/PaletteMenuClickTests.swift
+@@ -17,7 +17,7 @@ final class PaletteState {
+ }
+ 
+ enum PaletteMode {
+-    case launcher, clipboard, quicklinkEditor
++    case launcher, clipboard, quicklinkEditor, switchWindows
+     var isNativeEditor: Bool { self == .quicklinkEditor }
+ }
+ 

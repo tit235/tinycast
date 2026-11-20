@@ -1,0 +1,204 @@
+diff --git a/Tests/PaletteTabTests.swift b/Tests/PaletteTabTests.swift
+index cada686a..991bf4cf 100644
+--- a/Tests/PaletteTabTests.swift
++++ b/Tests/PaletteTabTests.swift
+@@ -1,6 +1,6 @@
+ import Foundation
+ 
+-/// The three surfaces stay reachable one way, and chat is skipped when off.
++/// Quick AI has its own chord; Tab rings the launcher and clipboard.
+ @main
+ @MainActor
+ struct PaletteTabTests {
+@@ -19,8 +19,8 @@ struct PaletteTabTests {
+     static func main() {
+         expect(
+             PaletteTabAction.resolve(mode: .launcher, aiEnabled: true, clipboardEnabled: true),
+-            .ask,
+-            "the launcher hands the typed text to chat as the question, not as a draft")
++            .carryQuery(.clipboard),
++            "Tab leaves the launcher for the clipboard while Quick AI uses Option-Tab")
+         expect(
+             PaletteTabAction.resolve(mode: .ai, aiEnabled: true, clipboardEnabled: true),
+             .freshScreen(.clipboard),
+@@ -68,18 +68,16 @@ struct PaletteTabTests {
+             .carryQuery(.launcher),
+             "turned off, the clipboard is skipped and chat returns to the launcher")
+ 
+-        // Three presses from the launcher have to land back on it, or the ring is a dead end.
++        // Tab rings the launcher and clipboard without entering Quick AI.
+         var mode = PaletteMode.launcher
+         var visited: [PaletteMode] = []
+-        for _ in 0..<3 {
++        for _ in 0..<2 {
+             switch PaletteTabAction.resolve(mode: mode, aiEnabled: true, clipboardEnabled: true) {
+             case .carryQuery(let next), .freshScreen(let next): mode = next
+-            // Asking opens chat, so the ring still steps onto it.
+-            case .ask: mode = .ai
+             }
+             visited.append(mode)
+         }
+-        if visited == [.ai, .clipboard, .launcher] {
++        if visited == [.clipboard, .launcher] {
+             passes += 1
+         } else {
+             failures += 1
+@@ -93,7 +91,6 @@ struct PaletteTabTests {
+                 mode: offMode, aiEnabled: false, clipboardEnabled: true)
+             {
+             case .carryQuery(let next), .freshScreen(let next): offMode = next
+-            case .ask: offMode = .ai
+             }
+             offVisited.append(offMode)
+         }
+diff --git a/Tests/SystemActionTests.swift b/Tests/SystemActionTests.swift
+index 5a2edad2..6383b62e 100644
+--- a/Tests/SystemActionTests.swift
++++ b/Tests/SystemActionTests.swift
+@@ -17,7 +17,7 @@ struct SystemActionTests {
+ 
+     static func main() {
+         let actions = SystemActionCatalog.all
+-        expect(actions.count == 32, "catalog contains all 32 agreed actions")
++        expect(actions.count == SystemAction.ID.allCases.count, "catalog covers the agreed actions")
+         expect(actions.map(\.id) == SystemAction.ID.allCases, "catalog covers every ID once")
+         expect(Set(actions.map { $0.name.lowercased() }).count == actions.count, "names are unique")
+         expect(actions.allSatisfy { !$0.name.isEmpty }, "names are non-empty")
+diff --git a/Tinycast/Palette/PaletteTabAction.swift b/Tinycast/Palette/PaletteTabAction.swift
+index 276420ed..a9d3f94c 100644
+--- a/Tinycast/Palette/PaletteTabAction.swift
++++ b/Tinycast/Palette/PaletteTabAction.swift
+@@ -1,19 +1,15 @@
+ import Foundation
+ 
+-/// Tab rings the three surfaces a reader opens directly; a sub-screen exits to the launcher.
++/// Tab rings the launcher and clipboard; a sub-screen exits to the launcher.
+ enum PaletteTabAction: Equatable {
+     /// The typed text rides along, because both ends narrow their own list by the same query.
+     case carryQuery(PaletteMode)
+     /// A fresh screen: chat's field holds a half-written message, which is nobody else's search.
+     case freshScreen(PaletteMode)
+-    /// The typed text is the question, so chat opens on the answer rather than an empty composer.
+-    case ask
+-
+     static func resolve(mode: PaletteMode, aiEnabled: Bool, clipboardEnabled: Bool) -> Self {
+         switch mode {
+         // A stop that is off leaves the ring, so Tab skips it rather than opening nothing.
+         case .launcher:
+-            if aiEnabled { return .ask }
+             return clipboardEnabled ? .carryQuery(.clipboard) : .carryQuery(.launcher)
+         case .ai:
+             return clipboardEnabled ? .freshScreen(.clipboard) : .carryQuery(.launcher)
+diff --git a/Tinycast/Palette/RootPaletteView.swift b/Tinycast/Palette/RootPaletteView.swift
+index 6fbca57b..70099e57 100644
+--- a/Tinycast/Palette/RootPaletteView.swift
++++ b/Tinycast/Palette/RootPaletteView.swift
+@@ -672,6 +672,13 @@ struct RootPaletteView: View {
+                 return openAliasEntry() ? .handled : .ignored
+             }
+             .onKeyPress(keys: [.tab], phases: .down) { press in
++                if press.modifiers.subtracting(.capsLock) == .option {
++                    guard !vm.isControlListOpen, !isCollapsed, quickAIOptionTabAvailable else {
++                        return .ignored
++                    }
++                    core.quickAICoordinator.ask(vm.query)
++                    return .handled
++                }
+                 // ⇥ inside an open list belongs to the list, not to the form's field order.
+                 if vm.isControlListOpen || menuOpen { return .handled }
+                 if vm.isComposing { return .ignored }
+@@ -858,7 +865,7 @@ struct RootPaletteView: View {
+                 // Given room last: at the default priority it would split it with the field.
+                 Spacer(minLength: 0).layoutPriority(-1)
+             }
+-            if tabOpensChat {
++            if quickAIOptionTabAvailable {
+                 headerGutter(width: metrics.spacing.md)
+                 quickAITabHint
+             }
+@@ -940,26 +947,23 @@ struct RootPaletteView: View {
+         return screen.headerAccessory(at: selection(in: screen), focus: $argumentFocused)
+     }
+ 
+-    /// Nothing else advertises Tab, so the launcher says where it goes.
++    /// Nothing else advertises Option-Tab, so the launcher says where it goes.
+     private var quickAITabHint: some View {
+-        BarButton(chrome: .rounded, action: cycleMode) {
++        BarButton(chrome: .rounded, action: { core.quickAICoordinator.ask(vm.query) }) {
+             HStack(spacing: metrics.spacing.sm) {
+                 Text("Quick AI")
+                     .font(metrics.typography.bar)
+                     .foregroundStyle(Theme.Colors.textSecondary)
+-                KeyCapChip(text: "⇥", style: .outline)
++                KeyCapChip(text: "⌥⇥", style: .outline)
+                     .accessibilityHidden(true)
+             }
+         }
+-        .help("Press Tab to ask Quick AI")
++        .help("Press Option-Tab to ask Quick AI")
+     }
+ 
+-    /// Resolved through `PaletteTabAction`, so the hint cannot promise the wrong destination.
+-    private var tabOpensChat: Bool {
+-        guard !isCollapsed, headerAccessory?.fieldNames.isEmpty ?? true else { return false }
+-        return PaletteTabAction.resolve(
+-            mode: vm.mode, aiEnabled: settings.aiEnabled,
+-            clipboardEnabled: settings.clipboardEnabled) == .ask
++    private var quickAIOptionTabAvailable: Bool {
++        !isCollapsed && vm.mode == .launcher && settings.aiEnabled
++            && (headerAccessory?.fieldNames.isEmpty ?? true)
+     }
+ 
+     private var hidesSearchField: Bool { !isCollapsed && screen.hidesSearchField }
+@@ -1556,7 +1560,6 @@ struct RootPaletteView: View {
+             vm.resetNavigation()
+         case .carryQuery(let mode): vm.pushCarryingQuery(mode: mode)
+         case .freshScreen(let mode): vm.push(mode: mode)
+-        case .ask: core.quickAICoordinator.ask(vm.query)
+         }
+     }
+ 
+diff --git a/docs/features/ai.md b/docs/features/ai.md
+index efbc720a..d1368af1 100644
+--- a/docs/features/ai.md
++++ b/docs/features/ai.md
+@@ -6,8 +6,8 @@ builds that chat's route through `AIProviderFactory` to stream an `AIRequest`.
+ Chat is the first consumer and [Quick Actions](quick-actions.md) the second; the provider layer
+ depends on neither, and Quick Actions carries its own route rather than borrowing this one.
+ 
+-Chat has two surfaces over one history, as Raycast's does. **Quick AI** is the palette screen: Tab
+-from the launcher asks what you typed, and the answer appears in place. **AI Chat** is a window:
++Chat has two surfaces over one history, as Raycast's does. **Quick AI** is the palette screen:
++Option-Tab from the launcher asks what you typed, and the answer appears in place. **AI Chat** is a window:
+ saved conversations in a sidebar on the left, the open one on the right, and a composer at the
+ bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
+ 
+diff --git a/docs/features/palette.md b/docs/features/palette.md
+index 0c0452b2..059287dc 100644
+--- a/docs/features/palette.md
++++ b/docs/features/palette.md
+@@ -172,18 +172,15 @@ pops, a root one closes), so `backHelp` says which, rather than promising a step
+ a close. It lights to `textPrimary` under the pointer over `Theme.Duration.hover`, and
+ `HeaderBackButton` keeps that hover state to itself so the header around it never re-renders.
+ 
+-The launcher advertises the first hop in the header: `Quick AI` beside a ⇥ key cap.
+-It is drawn only when Tab really would open Quick AI, a condition read
+-back out of `PaletteTabAction` rather than restated, so a hint can never promise a destination the
+-key does not go to: an argument field to walk takes Tab first, and the hint steps aside for it.
++The launcher advertises Quick AI in the header beside a ⌥⇥ key cap. Option-Tab opens Quick AI
++when AI is enabled; Tab continues to move through the launcher and clipboard ring. An argument
++field to walk takes Tab first, and Option-Tab's hint steps aside while one is focused.
+ 
+ `PaletteTabAction` decides where Tab goes _and_ what happens to the typed text. The clipboard hands
+-the query over, since one search narrows either list. **From the launcher, Tab `.ask`s**: Quick AI opens
+-fresh with the typed text already sent, so one key turns a search into a question. Leaving chat is
++the query over, since one search narrows either list. **From the launcher, Option-Tab asks**: Quick AI opens
++fresh with the typed text already sent, so one chord turns a search into a question. Leaving chat is
+ still a `.freshScreen`: that field holds a half-written message rather than a query, and a draft
+-dropped into a filter matches nothing. `.ask` is its own case rather than a `carryQuery(.ai)` because
+-the text is submitted, not seeded, and the hint reads the case back out (`== .ask`) instead of
+-restating the rule.
++dropped into a filter matches nothing.
+ 
+ **A ring hop is a step, so Escape walks back out the way Tab came in**: launcher → chat → clipboard
+ takes two presses to unwind, and the back chevron's tooltip stops promising a step it cannot take.

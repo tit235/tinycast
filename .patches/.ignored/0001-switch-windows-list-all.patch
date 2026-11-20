@@ -1,0 +1,53 @@
+diff --git a/Tinycast/Features/WindowManagement/Service/AXWindowAccess.swift b/Tinycast/Features/WindowManagement/Service/AXWindowAccess.swift
+index e326d63e..1997b94d 100644
+--- a/Tinycast/Features/WindowManagement/Service/AXWindowAccess.swift
++++ b/Tinycast/Features/WindowManagement/Service/AXWindowAccess.swift
+@@ -29,14 +29,18 @@ enum AXWindowAccess {
+         return windows(in: application).first(where: isEligible)
+     }
+ 
+-    /// Every window the app reports, unfiltered and in its own order.
++    /// Every window the app reports, including main or focused windows omitted from its list.
+     static func windows(in application: AXUIElement) -> [AXUIElement] {
+         var value: CFTypeRef?
+-        guard
+-            AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value)
+-                == .success,
+-            let windows = value as? [AXUIElement]
+-        else { return [] }
++        let result = AXUIElementCopyAttributeValue(
++            application, kAXWindowsAttribute as CFString, &value)
++        var windows = result == .success ? value as? [AXUIElement] ?? [] : []
++        for attribute in [kAXMainWindowAttribute, kAXFocusedWindowAttribute] {
++            guard let window = element(application, attribute),
++                !windows.contains(where: { CFEqual($0, window) })
++            else { continue }
++            windows.append(window)
++        }
+         return windows
+     }
+ 
+diff --git a/docs/features/navigation.md b/docs/features/navigation.md
+index d31f2033..06740354 100644
+--- a/docs/features/navigation.md
++++ b/docs/features/navigation.md
+@@ -12,7 +12,7 @@ launcher and a still-recorded shortcut for any does nothing.
+ ## Invariants
+ 
+ - **The sweep is synchronous, and that is deliberate.** `WindowSwitchSweep.snapshot` visits apps and
+-  their windows — one level, two AX reads each — where the menu walk descends a tree. A
++  their windows — one level, with bounded AX reads — where the menu walk descends a tree. A
+   `Task.detached` here would buy a "Reading windows…" state nobody would ever see, and cost a
+   revision counter to keep superseded sweeps from publishing. `WindowInventory` made the same call.
+ - **A live `AXUIElement` never leaves the main actor, and never outlives the show.** The pure entry
+@@ -71,7 +71,9 @@ rather than after the user has switched apps once.
+ ## The sweep
+ 
+ `WindowSwitchSweep` walks `WindowInventory.candidates()` — regular-policy, non-terminated, not us —
+-and takes every window whose subrole is `AXStandardWindow`. That is looser than
++and takes every window whose subrole is `AXStandardWindow`. It combines `AXWindows` with the app's
++main and focused window attributes, deduplicating by AX element identity, because some apps omit
++those windows from the array. That is looser than
+ `WindowInventory.eligibleFrame` in two ways that both matter here: a **minimized** window is exactly
+ what a switcher is for, and a window on another Space reports no frame until it is raised, so
+ requiring one would hide it.

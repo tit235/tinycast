@@ -1,0 +1,895 @@
+diff --git a/Tests/WindowSwitchTests.swift b/Tests/WindowSwitchTests.swift
+index 058782e7..3d2cfd0d 100644
+--- a/Tests/WindowSwitchTests.swift
++++ b/Tests/WindowSwitchTests.swift
+@@ -13,11 +13,12 @@ struct WindowSwitchTests {
+     }
+ 
+     static func entry(
+-        _ handle: Int, app: String = "Safari", title: String = "Window",
+-        minimized: Bool = false, rank: Int = 0
++        _ windowID: UInt32, app: String = "Safari", title: String = "Window",
++        minimized: Bool = false, rank: Int = 0, order: Int? = nil
+     ) -> WindowSwitchEntry {
+         WindowSwitchEntry(
+-            handle: handle, appName: app, bundleID: "com.example.\(app.lowercased())",
++            windowID: windowID, order: order ?? Int(windowID), appName: app,
++            bundleID: "com.example.\(app.lowercased())",
+             iconURL: nil, iconStamp: 0, title: title, isMinimized: minimized, appRank: rank)
+     }
+ 
+@@ -28,6 +29,7 @@ struct WindowSwitchTests {
+         ordering()
+         orderingIsTotal()
+         switchable()
++        merging()
+         ranking()
+         rankingLimit()
+ 
+@@ -36,7 +38,7 @@ struct WindowSwitchTests {
+     }
+ 
+     static func identity() {
+-        expect(entry(7).id == "7", "the id is the handle, which is unique inside one sweep")
++        expect(entry(7).id == "7", "the id is the stable WindowServer id")
+     }
+ 
+     static func displayTitle() {
+@@ -68,21 +70,23 @@ struct WindowSwitchTests {
+             entry(4, app: "Zed", rank: .max)
+         ])
+         expect(
+-            sorted.map(\.handle) == [2, 3, 0, 4, 1],
+-            "front app first, then by rank, unranked next, minimized last: \(sorted.map(\.handle))")
++            sorted.map(\.windowID) == [2, 3, 0, 4, 1],
++            "front app first, then by rank, unranked next, minimized last: \(sorted.map(\.windowID))")
+     }
+ 
+     static func orderingIsTotal() {
+         let entries = (0..<12).map {
+-            entry($0, app: ["Mail", "Safari", "Zed"][$0 % 3], minimized: $0 % 4 == 0, rank: $0 % 3)
++            entry(
++                UInt32($0), app: ["Mail", "Safari", "Zed"][$0 % 3],
++                minimized: $0 % 4 == 0, rank: $0 % 3)
+         }
+         let once = WindowSwitchOrder.sorted(entries)
+         let twice = WindowSwitchOrder.sorted(entries.reversed())
+         expect(
+-            once.map(\.handle) == twice.map(\.handle),
++            once.map(\.windowID) == twice.map(\.windowID),
+             "the order is total, so a shuffled sweep sorts identically")
+         expect(
+-            once.map(\.handle).sorted() == entries.map(\.handle).sorted(),
++            once.map(\.windowID).sorted() == entries.map(\.windowID).sorted(),
+             "sorting drops nothing")
+         let split = once.firstIndex(where: \.isMinimized) ?? once.count
+         expect(
+@@ -113,6 +117,24 @@ struct WindowSwitchTests {
+             "a dialog cannot minimize, so it is never read as a minimized window")
+     }
+ 
++    static func merging() {
++        let current = [entry(7, app: "Safari", title: "Published", rank: 0)]
++        let merged = WindowSwitchOrder.merging(
++            current,
++            with: [
++                entry(7, app: "Safari", title: "Remote duplicate", rank: 0),
++                entry(9, app: "Mail", title: "Other Space", rank: 1)
++            ])
++        expect(merged.map(\.windowID) == [7, 9], "remote windows merge into the sorted list")
++        expect(merged[0].title == "Published", "a remote duplicate never replaces a live AX entry")
++
++        let sameApp = WindowSwitchOrder.merging(
++            [entry(90, order: 0)], with: [entry(1, order: .max)])
++        expect(
++            sameApp.map(\.windowID) == [90, 1],
++            "a remote-only window follows the app's published front-to-back run")
++    }
++
+     static func ranking() {
+         let entries = [
+             entry(0, app: "Mail", title: "Drafts"),
+@@ -120,13 +142,13 @@ struct WindowSwitchTests {
+             entry(2, app: "Safari", title: "Inbox archive")
+         ]
+         expect(
+-            WindowSwitchQuery.rank(entries, for: "").map(\.handle) == [0, 1, 2],
++            WindowSwitchQuery.rank(entries, for: "").map(\.windowID) == [0, 1, 2],
+             "an empty query keeps the order it was handed")
+         expect(
+-            WindowSwitchQuery.rank(entries, for: "Inbox").first?.handle == 1,
++            WindowSwitchQuery.rank(entries, for: "Inbox").first?.windowID == 1,
+             "the exact title beats the one that only starts with it")
+         expect(
+-            WindowSwitchQuery.rank(entries, for: "Safari").map(\.handle) == [1, 2],
++            WindowSwitchQuery.rank(entries, for: "Safari").map(\.windowID) == [1, 2],
+             "the app name matches every one of its windows, in the order given")
+         expect(
+             WindowSwitchQuery.rank(entries, for: "zzz").isEmpty,
+@@ -135,7 +157,7 @@ struct WindowSwitchTests {
+ 
+     static func rankingLimit() {
+         let entries = (0..<(WindowSwitchQuery.resultLimit + 50)).map {
+-            entry($0, app: "Safari", title: "Tab \($0)")
++            entry(UInt32($0), app: "Safari", title: "Tab \($0)")
+         }
+         expect(
+             WindowSwitchQuery.rank(entries, for: "").count == WindowSwitchQuery.resultLimit,
+diff --git a/Tinycast/Features/WindowManagement/Service/AXWindowAccess.swift b/Tinycast/Features/WindowManagement/Service/AXWindowAccess.swift
+index fa3bc995..fac148b1 100644
+--- a/Tinycast/Features/WindowManagement/Service/AXWindowAccess.swift
++++ b/Tinycast/Features/WindowManagement/Service/AXWindowAccess.swift
+@@ -3,6 +3,12 @@ import AppKit
+ // `@preconcurrency` downgrades AX diagnostics: `kAX…` are mutable C globals, but constant.
+ @preconcurrency import ApplicationServices
+ 
++@_silgen_name("_AXUIElementCreateWithRemoteToken")
++func _AXUIElementCreateWithRemoteToken(_ data: CFData) -> Unmanaged<AXUIElement>?
++
++@_silgen_name("_AXUIElementRemoteTokenCreate")
++func _AXUIElementRemoteTokenCreate(_ element: AXUIElement) -> Unmanaged<CFData>?
++
+ /// Every `AXUIElement` call in the feature, so no two callers disagree on what a window is.
+ @MainActor
+ enum AXWindowAccess {
+@@ -14,6 +20,13 @@ enum AXWindowAccess {
+     static let fullScreenAttribute = "AXFullScreen" as CFString
+     static let fullScreenButtonAttribute = "AXFullScreenButton" as CFString
+ 
++    struct RemoteWindow: Sendable {
++        let windowID: UInt32
++        let elementID: UInt64
++        let title: String
++        let isMinimized: Bool
++    }
++
+     // MARK: - Finding windows
+ 
+     static func application(for pid: pid_t, timeout: Float = messagingTimeout) -> AXUIElement {
+@@ -40,6 +53,126 @@ enum AXWindowAccess {
+         return windows
+     }
+ 
++    nonisolated static func elementID(of element: AXUIElement) -> UInt64? {
++        guard let token = _AXUIElementRemoteTokenCreate(element)?.takeRetainedValue(),
++            CFDataGetLength(token) >= 20
++        else { return nil }
++        guard let bytes = CFDataGetBytePtr(token) else { return nil }
++        var elementID: UInt64 = 0
++        memcpy(&elementID, bytes + 12, 8)
++        return elementID
++    }
++
++    nonisolated static func focusedElementID(for pid: pid_t, timeout: Float) -> UInt64? {
++        let application = AXUIElementCreateApplication(pid)
++        AXUIElementSetMessagingTimeout(application, timeout)
++        var value: CFTypeRef?
++        guard
++            AXUIElementCopyAttributeValue(
++                application, kAXFocusedUIElementAttribute as CFString, &value) == .success,
++            let value, CFGetTypeID(value) == AXUIElementGetTypeID()
++        else { return nil }
++        // Type checked by CFGetTypeID above; `as?` on a CF type is a compile error.
++        return elementID(of: value as! AXUIElement)
++    }
++
++    nonisolated static func remoteWindows(
++        for pid: pid_t, matching targetIDs: Set<UInt32>, budgetMilliseconds: Double,
++        timeout: Float, startingAt startElementID: UInt64 = 0, descending: Bool = false,
++        stride: UInt64 = 1
++    ) -> [RemoteWindow] {
++        guard !targetIDs.isEmpty, stride > 0, let token = remoteToken(for: pid),
++            let bytes = CFDataGetMutableBytePtr(token)
++        else { return [] }
++        var remaining = targetIDs
++        var found: [RemoteWindow] = []
++        let start = ProcessInfo.processInfo.systemUptime
++        var elementID = startElementID
++        var iterations = 0
++
++        while true {
++            if Task.isCancelled { break }
++            var tokenElementID = elementID
++            memcpy(bytes + 12, &tokenElementID, 8)
++            if let candidate = _AXUIElementCreateWithRemoteToken(token)?.takeRetainedValue() {
++                AXUIElementSetMessagingTimeout(candidate, timeout)
++                if let windowID = windowID(of: candidate), remaining.contains(windowID) {
++                    let window = containingWindow(of: candidate) ?? candidate
++                    AXUIElementSetMessagingTimeout(window, timeout)
++                    if AXWindowAccess.windowID(of: window) == windowID,
++                        string(window, kAXRoleAttribute) == (kAXWindowRole as String),
++                        string(window, kAXSubroleAttribute)
++                            == (kAXStandardWindowSubrole as String),
++                        let windowElementID = AXWindowAccess.elementID(of: window)
++                    {
++                        found.append(
++                            RemoteWindow(
++                                windowID: windowID, elementID: windowElementID,
++                                title: string(window, kAXTitleAttribute) ?? "",
++                                isMinimized: bool(window, kAXMinimizedAttribute) == true))
++                        remaining.remove(windowID)
++                        if remaining.isEmpty { break }
++                    }
++                }
++            }
++            iterations += 1
++            if iterations.isMultiple(of: 64),
++                (ProcessInfo.processInfo.systemUptime - start) * 1_000 >= budgetMilliseconds
++            {
++                break
++            }
++            if descending {
++                guard elementID >= stride else { break }
++                elementID -= stride
++            } else {
++                guard elementID <= UInt64.max - stride else { break }
++                elementID += stride
++            }
++        }
++        return found
++    }
++
++    nonisolated static func remoteWindow(
++        for pid: pid_t, elementID: UInt64, expectedWindowID: UInt32, timeout: Float
++    ) -> AXUIElement? {
++        guard let token = remoteToken(for: pid), let bytes = CFDataGetMutableBytePtr(token)
++        else { return nil }
++        var elementID = elementID
++        memcpy(bytes + 12, &elementID, 8)
++        guard let window = _AXUIElementCreateWithRemoteToken(token)?.takeRetainedValue() else {
++            return nil
++        }
++        AXUIElementSetMessagingTimeout(window, timeout)
++        guard windowID(of: window) == expectedWindowID,
++            string(window, kAXRoleAttribute) == (kAXWindowRole as String),
++            string(window, kAXSubroleAttribute) == (kAXStandardWindowSubrole as String)
++        else { return nil }
++        return window
++    }
++
++    nonisolated private static func containingWindow(of element: AXUIElement) -> AXUIElement? {
++        var value: CFTypeRef?
++        guard
++            AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &value) == .success,
++            let value, CFGetTypeID(value) == AXUIElementGetTypeID()
++        else { return nil }
++        // Type checked by CFGetTypeID above; `as?` on a CF type is a compile error.
++        return (value as! AXUIElement)
++    }
++
++    // The AX remote-token ABI is pid, zero, `coco`, then the 64-bit element id.
++    nonisolated private static func remoteToken(for pid: pid_t) -> CFMutableData? {
++        guard let token = CFDataCreateMutable(kCFAllocatorDefault, 20) else { return nil }
++        CFDataSetLength(token, 20)
++        guard let bytes = CFDataGetMutableBytePtr(token) else { return nil }
++        memset(bytes, 0, 20)
++        var pid = pid
++        memcpy(bytes, &pid, 4)
++        var magic = Int32(0x636f636f)
++        memcpy(bytes + 8, &magic, 4)
++        return token
++    }
++
+     /// A real, restorable window: not a sheet, popover or minimized one, and it reports geometry.
+     static func isEligible(_ window: AXUIElement) -> Bool {
+         guard string(window, kAXRoleAttribute) == (kAXWindowRole as String) else { return false }
+@@ -103,7 +236,7 @@ enum AXWindowAccess {
+     // MARK: - Window identity
+ 
+     /// The window server's number, which outlives any `AXUIElement`. See window-rooms.md.
+-    static func windowID(of window: AXUIElement) -> UInt32? {
++    nonisolated static func windowID(of window: AXUIElement) -> UInt32? {
+         guard let copyWindowID else { return nil }
+         var id: CGWindowID = 0
+         return copyWindowID(window, &id) == .success && id != 0 ? id : nil
+@@ -113,7 +246,7 @@ enum AXWindowAccess {
+         @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+ 
+     /// Private, so resolved at run time: a macOS without it degrades to titles, never a crash.
+-    private static let copyWindowID: CopyWindowID? = {
++    nonisolated private static let copyWindowID: CopyWindowID? = {
+         guard let symbol = dlsym(dlopen(nil, RTLD_NOW), "_AXUIElementGetWindow") else { return nil }
+         return unsafeBitCast(symbol, to: CopyWindowID.self)
+     }()
+@@ -237,14 +370,14 @@ enum AXWindowAccess {
+         return (value as! AXUIElement)
+     }
+ 
+-    static func string(_ element: AXUIElement, _ attribute: String) -> String? {
++    nonisolated static func string(_ element: AXUIElement, _ attribute: String) -> String? {
+         var value: CFTypeRef?
+         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
+         else { return nil }
+         return value as? String
+     }
+ 
+-    static func bool(_ element: AXUIElement, _ attribute: String) -> Bool? {
++    nonisolated static func bool(_ element: AXUIElement, _ attribute: String) -> Bool? {
+         var value: CFTypeRef?
+         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success
+         else { return nil }
+diff --git a/Tinycast/Features/WindowSwitcher/Model/WindowSwitchEntry.swift b/Tinycast/Features/WindowSwitcher/Model/WindowSwitchEntry.swift
+index 202fc725..58e59ed3 100644
+--- a/Tinycast/Features/WindowSwitcher/Model/WindowSwitchEntry.swift
++++ b/Tinycast/Features/WindowSwitcher/Model/WindowSwitchEntry.swift
+@@ -1,9 +1,11 @@
+ import Foundation
+ 
+-/// One open window the switcher offers. A handle, not an `AXUIElement`: this layer stays pure.
++/// One open window the switcher offers. An id, not an `AXUIElement`: this layer stays pure.
+ struct WindowSwitchEntry: Identifiable, Hashable, Sendable {
+-    /// The app's own front-to-back order, flattened across apps; also indexes the live elements.
+-    let handle: Int
++    /// Stable across the AX and WindowServer paths for the life of the window.
++    let windowID: UInt32
++    /// The app's own front-to-back order; remote-only windows sort after its published ones.
++    let order: Int
+     let appName: String
+     let bundleID: String
+     let iconURL: URL?
+@@ -14,7 +16,7 @@ struct WindowSwitchEntry: Identifiable, Hashable, Sendable {
+     let appRank: Int
+ 
+     /// A string, because every palette list identifies its rows by one.
+-    var id: String { String(handle) }
++    var id: String { String(windowID) }
+ 
+     /// A document window with no title yet reads as its app rather than as a blank row.
+     var displayTitle: String {
+diff --git a/Tinycast/Features/WindowSwitcher/Model/WindowSwitchOrder.swift b/Tinycast/Features/WindowSwitcher/Model/WindowSwitchOrder.swift
+index aaa14f2b..b59fa80f 100644
+--- a/Tinycast/Features/WindowSwitcher/Model/WindowSwitchOrder.swift
++++ b/Tinycast/Features/WindowSwitcher/Model/WindowSwitchOrder.swift
+@@ -2,6 +2,14 @@ import Foundation
+ 
+ /// The order an empty query shows: most recently used first, minimized windows last.
+ enum WindowSwitchOrder {
++    static func merging(
++        _ current: [WindowSwitchEntry], with additions: [WindowSwitchEntry]
++    ) -> [WindowSwitchEntry] {
++        var entries = Dictionary(uniqueKeysWithValues: current.map { ($0.windowID, $0) })
++        for entry in additions where entries[entry.windowID] == nil { entries[entry.windowID] = entry }
++        return sorted(Array(entries.values))
++    }
++
+     /// A total order, so the sort is deterministic however the sweep happened to enumerate apps.
+     static func sorted(_ entries: [WindowSwitchEntry]) -> [WindowSwitchEntry] {
+         entries.sorted { left, right in
+@@ -11,7 +19,8 @@ enum WindowSwitchOrder {
+                 return left.appName.localizedCaseInsensitiveCompare(right.appName)
+                     == .orderedAscending
+             }
+-            return left.handle < right.handle
++            if left.order != right.order { return left.order < right.order }
++            return left.windowID < right.windowID
+         }
+     }
+ }
+diff --git a/Tinycast/Features/WindowSwitcher/Service/WindowSwitchSession.swift b/Tinycast/Features/WindowSwitcher/Service/WindowSwitchSession.swift
+index 740c994a..d31f635e 100644
+--- a/Tinycast/Features/WindowSwitcher/Service/WindowSwitchSession.swift
++++ b/Tinycast/Features/WindowSwitcher/Service/WindowSwitchSession.swift
+@@ -6,21 +6,49 @@ final class WindowSwitchSession {
+     private(set) var snapshot: [WindowSwitchEntry] = []
+     /// The rows the list reads: ranked once per query change, so one keystroke ranks once.
+     private(set) var filtered: [WindowSwitchEntry] = []
++    private(set) var isDiscovering = false
+ 
+     private var query = ""
++    private var revision = 0
+     /// Live AX handles, so they are never observed and never outlive the show.
+-    @ObservationIgnored private var elements: [Int: WindowSwitchSweep.Element] = [:]
++    @ObservationIgnored private var elements: [UInt32: WindowSwitchSweep.Element] = [:]
++    @ObservationIgnored private var remoteReferences: [UInt32: WindowSwitchSweep.RemoteReference] = [:]
+     /// Held only while rows are shown, so an app that quits takes its rows with it.
+     @ObservationIgnored private var terminationToken: NotificationCenter.ObservationToken?
+ 
+-    func present(_ snapshot: WindowSwitchSweep.Snapshot) {
++    @discardableResult
++    func present(_ snapshot: WindowSwitchSweep.Snapshot) -> Int {
++        revision &+= 1
++        isDiscovering = true
+         self.snapshot = WindowSwitchOrder.sorted(snapshot.entries)
+         elements = snapshot.elements
++        remoteReferences = [:]
+         observeTerminations()
+         applyQuery()
++        return revision
+     }
+ 
+-    func element(for handle: Int) -> WindowSwitchSweep.Element? { elements[handle] }
++    func merge(_ remote: WindowSwitchSweep.RemoteSnapshot, revision: Int) -> Bool {
++        guard revision == self.revision else { return false }
++        isDiscovering = false
++        let existingIDs = Set(snapshot.map(\.windowID))
++        for entry in remote.entries where !existingIDs.contains(entry.windowID) {
++            if let reference = remote.references[entry.windowID] {
++                remoteReferences[entry.windowID] = reference
++            }
++        }
++        snapshot = WindowSwitchOrder.merging(snapshot, with: remote.entries)
++        applyQuery()
++        return true
++    }
++
++    func element(for windowID: UInt32) -> WindowSwitchSweep.Element? {
++        if let element = elements[windowID] { return element }
++        guard let reference = remoteReferences[windowID] else { return nil }
++        let element = WindowSwitchSweep.element(for: reference)
++        if let element { elements[windowID] = element }
++        return element
++    }
+ 
+     func reset() {
+         if let terminationToken {
+@@ -29,7 +57,10 @@ final class WindowSwitchSession {
+         terminationToken = nil
+         snapshot = []
+         filtered = []
++        isDiscovering = false
+         elements = [:]
++        remoteReferences = [:]
++        revision &+= 1
+         query = ""
+     }
+ 
+@@ -38,8 +69,8 @@ final class WindowSwitchSession {
+         applyQuery()
+     }
+ 
+-    func markMinimized(_ handle: Int) {
+-        guard let index = snapshot.firstIndex(where: { $0.handle == handle }) else { return }
++    func markMinimized(_ windowID: UInt32) {
++        guard let index = snapshot.firstIndex(where: { $0.windowID == windowID }) else { return }
+         var entries = snapshot
+         entries[index].isMinimized = true
+         snapshot = WindowSwitchOrder.sorted(entries)
+@@ -54,10 +85,14 @@ final class WindowSwitchSession {
+     }
+ 
+     private func removeWindows(of pid: pid_t) {
+-        let gone = Set(elements.compactMap { $0.value.app.processIdentifier == pid ? $0.key : nil })
++        let gone = Set(snapshot.compactMap { entry in
++            (elements[entry.windowID]?.app.processIdentifier == pid
++                || remoteReferences[entry.windowID]?.pid == pid) ? entry.windowID : nil
++        })
+         guard !gone.isEmpty else { return }
+-        for handle in gone { elements[handle] = nil }
+-        snapshot.removeAll { gone.contains($0.handle) }
++        for windowID in gone { elements[windowID] = nil }
++        for windowID in gone { remoteReferences[windowID] = nil }
++        snapshot.removeAll { gone.contains($0.windowID) }
+         applyQuery()
+     }
+ 
+diff --git a/Tinycast/Features/WindowSwitcher/Service/WindowSwitchSweep.swift b/Tinycast/Features/WindowSwitcher/Service/WindowSwitchSweep.swift
+index c9a17939..07c71b4a 100644
+--- a/Tinycast/Features/WindowSwitcher/Service/WindowSwitchSweep.swift
++++ b/Tinycast/Features/WindowSwitcher/Service/WindowSwitchSweep.swift
+@@ -1,12 +1,15 @@
+ import AppKit
+ @preconcurrency import ApplicationServices
+ 
+-/// Reads every switchable window over AX, once. Shallow enough to stay synchronous: unlike the
+-/// menu walk it visits apps and their windows, never a tree.
++/// Reads every switchable window over AX and WindowServer.
+ @MainActor
+ enum WindowSwitchSweep {
+-    /// A sweep walks every app, so one hung process must not cost the full messaging timeout.
+-    private static let sweepTimeout: Float = 0.2
++    /// A sweep walks every app, so one hung process must not cost the full mover timeout.
++    nonisolated private static let sweepTimeout: Float = 0.2
++    nonisolated private static let remoteBudgetMilliseconds = 250.0
++    nonisolated private static let anchoredRemoteBudgetMilliseconds = 500.0
++    nonisolated private static let sourceRemoteBudgetMilliseconds = 2_000.0
++    nonisolated private static let minimumServerWindowSize = CGSize(width: 80, height: 60)
+ 
+     /// Live AX handles for one window. Never `Sendable`: these do not leave the main actor.
+     struct Element {
+@@ -15,14 +18,42 @@ enum WindowSwitchSweep {
+         let window: AXUIElement
+     }
+ 
++    struct Application: Sendable {
++        let pid: pid_t
++        let appName: String
++        let bundleID: String
++        let iconURL: URL?
++        let iconStamp: Int
++        let appRank: Int
++        let isSource: Bool
++    }
++
++    struct RemoteReference: Sendable {
++        let pid: pid_t
++        let windowID: UInt32
++        let elementID: UInt64
++    }
++
+     struct Snapshot {
+         var entries: [WindowSwitchEntry]
+-        var elements: [Int: Element]
++        var elements: [UInt32: Element]
++        var applications: [Application]
++    }
++
++    struct RemoteSnapshot: Sendable {
++        var entries: [WindowSwitchEntry]
++        var references: [UInt32: RemoteReference]
+     }
+ 
+-    static func snapshot(ranks: [pid_t: Int]) -> Snapshot {
++    private struct ServerWindow: Sendable {
++        let pid: pid_t
++        let windowID: UInt32
++    }
++
++    static func snapshot(ranks: [pid_t: Int], sourcePID: pid_t?) -> Snapshot {
+         var entries: [WindowSwitchEntry] = []
+-        var elements: [Int: Element] = [:]
++        var elements: [UInt32: Element] = [:]
++        var applications: [Application] = []
+ 
+         for app in WindowInventory.candidates() {
+             guard let bundleID = app.bundleIdentifier else { continue }
+@@ -30,21 +61,138 @@ enum WindowSwitchSweep {
+             let application = AXWindowAccess.application(for: pid, timeout: sweepTimeout)
+             let iconURL = app.bundleURL
+             let iconStamp = iconURL.map(FileIconStamp.value(for:)) ?? 0
+-            for window in AXWindowAccess.windows(in: application) {
++            let appName = app.localizedName ?? bundleID
++            let appRank = ranks[pid] ?? .max
++            var order = 0
++            applications.append(
++                Application(
++                    pid: pid, appName: appName, bundleID: bundleID, iconURL: iconURL,
++                    iconStamp: iconStamp, appRank: appRank, isSource: pid == sourcePID))
++
++            func append(_ window: AXUIElement) {
+                 AXUIElementSetMessagingTimeout(window, sweepTimeout)
+                 let minimized = AXWindowAccess.bool(window, kAXMinimizedAttribute) == true
+-                guard isSwitchable(window, minimized: minimized) else { continue }
+-                let handle = entries.count
++                guard isSwitchable(window, minimized: minimized),
++                    let windowID = AXWindowAccess.windowID(of: window), elements[windowID] == nil
++                else { return }
+                 entries.append(
+                     WindowSwitchEntry(
+-                        handle: handle, appName: app.localizedName ?? bundleID,
+-                        bundleID: bundleID, iconURL: iconURL, iconStamp: iconStamp,
++                        windowID: windowID, order: order, appName: appName, bundleID: bundleID,
++                        iconURL: iconURL, iconStamp: iconStamp,
+                         title: AXWindowAccess.string(window, kAXTitleAttribute) ?? "",
+-                        isMinimized: minimized, appRank: ranks[pid] ?? .max))
+-                elements[handle] = Element(app: app, application: application, window: window)
++                        isMinimized: minimized, appRank: appRank))
++                elements[windowID] = Element(
++                    app: app, application: application, window: window)
++                order += 1
+             }
++
++            for window in AXWindowAccess.windows(in: application) { append(window) }
++            if let focused = AXWindowAccess.element(application, kAXFocusedWindowAttribute) {
++                append(focused)
++            }
++            if let main = AXWindowAccess.element(application, kAXMainWindowAttribute) { append(main) }
++        }
++        return Snapshot(entries: entries, elements: elements, applications: applications)
++    }
++
++    nonisolated static func remoteSnapshot(
++        applications: [Application], excluding knownWindowIDs: Set<UInt32>
++    ) async -> RemoteSnapshot {
++        let candidates = serverWindows(applications: applications, excluding: knownWindowIDs)
++        let candidatesByPID = Dictionary(grouping: candidates, by: \.pid)
++
++        return await withTaskGroup(of: RemoteSnapshot.self) { group in
++            for application in applications {
++                guard let candidates = candidatesByPID[application.pid], !candidates.isEmpty else {
++                    continue
++                }
++                group.addTask {
++                    let targetIDs = Set(candidates.map(\.windowID))
++                    var windows = AXWindowAccess.remoteWindows(
++                        for: application.pid, matching: targetIDs,
++                        budgetMilliseconds: remoteBudgetMilliseconds, timeout: sweepTimeout)
++                    var unresolved = targetIDs.subtracting(windows.map(\.windowID))
++                    if !unresolved.isEmpty,
++                        let anchor = AXWindowAccess.focusedElementID(
++                            for: application.pid, timeout: sweepTimeout)
++                    {
++                        windows.append(
++                            contentsOf: AXWindowAccess.remoteWindows(
++                                for: application.pid, matching: unresolved,
++                                budgetMilliseconds: anchoredRemoteBudgetMilliseconds,
++                                timeout: sweepTimeout, startingAt: anchor, descending: true,
++                                stride: 64))
++                        unresolved = targetIDs.subtracting(windows.map(\.windowID))
++                        if application.isSource, !unresolved.isEmpty {
++                            windows.append(
++                                contentsOf: AXWindowAccess.remoteWindows(
++                                    for: application.pid, matching: unresolved,
++                                    budgetMilliseconds: sourceRemoteBudgetMilliseconds,
++                                    timeout: sweepTimeout, startingAt: anchor,
++                                    descending: true))
++                        }
++                    }
++                    var entries: [WindowSwitchEntry] = []
++                    var references: [UInt32: RemoteReference] = [:]
++                    for window in windows {
++                        entries.append(
++                            WindowSwitchEntry(
++                                windowID: window.windowID, order: .max,
++                                appName: application.appName,
++                                bundleID: application.bundleID, iconURL: application.iconURL,
++                                iconStamp: application.iconStamp, title: window.title,
++                                isMinimized: window.isMinimized, appRank: application.appRank))
++                        references[window.windowID] = RemoteReference(
++                            pid: application.pid, windowID: window.windowID,
++                            elementID: window.elementID)
++                    }
++                    return RemoteSnapshot(entries: entries, references: references)
++                }
++            }
++
++            var result = RemoteSnapshot(entries: [], references: [:])
++            for await partial in group {
++                result.entries.append(contentsOf: partial.entries)
++                result.references.merge(partial.references) { current, _ in current }
++            }
++            return result
++        }
++    }
++
++    static func element(for reference: RemoteReference) -> Element? {
++        guard let app = NSRunningApplication(processIdentifier: reference.pid), !app.isTerminated
++        else { return nil }
++        let application = AXWindowAccess.application(for: reference.pid, timeout: sweepTimeout)
++        guard
++            let window = AXWindowAccess.remoteWindow(
++                for: reference.pid, elementID: reference.elementID,
++                expectedWindowID: reference.windowID, timeout: sweepTimeout)
++        else { return nil }
++        return Element(app: app, application: application, window: window)
++    }
++
++    nonisolated private static func serverWindows(
++        applications: [Application], excluding knownWindowIDs: Set<UInt32>
++    ) -> [ServerWindow] {
++        let pids = Set(applications.map(\.pid))
++        let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
++        guard
++            let listing = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
++                as? [[String: Any]]
++        else { return [] }
++
++        return listing.compactMap { raw in
++            guard raw[kCGWindowLayer as String] as? Int == 0,
++                let pid = raw[kCGWindowOwnerPID as String] as? NSNumber,
++                let windowID = raw[kCGWindowNumber as String] as? NSNumber,
++                pids.contains(pid.int32Value), !knownWindowIDs.contains(windowID.uint32Value),
++                let bounds = raw[kCGWindowBounds as String] as? [String: CGFloat],
++                let width = bounds["Width"], let height = bounds["Height"],
++                width >= minimumServerWindowSize.width,
++                height >= minimumServerWindowSize.height
++            else { return nil }
++            return ServerWindow(pid: pid.int32Value, windowID: windowID.uint32Value)
+         }
+-        return Snapshot(entries: entries, elements: elements)
+     }
+ 
+     /// Looser than the layout inventory's rule: a minimized window is exactly what a switcher is
+diff --git a/Tinycast/Features/WindowSwitcher/UI/WindowSwitchCoordinator.swift b/Tinycast/Features/WindowSwitcher/UI/WindowSwitchCoordinator.swift
+index 87b00e8b..d3389f0e 100644
+--- a/Tinycast/Features/WindowSwitcher/UI/WindowSwitchCoordinator.swift
++++ b/Tinycast/Features/WindowSwitcher/UI/WindowSwitchCoordinator.swift
+@@ -10,6 +10,7 @@ final class WindowSwitchCoordinator {
+     private unowned let core: AppCore
+     /// Armed by a repeat press with its modifiers held: letting go switches, as ⌘Tab does.
+     private var releaseMonitor: Any?
++    private var remoteTask: Task<Void, Never>?
+     private static let chordModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+ 
+     init(
+@@ -28,6 +29,8 @@ final class WindowSwitchCoordinator {
+         appIndex.setCommandsVisible(
+             [.switchWindows, .switchWindowsBackwards], settings.navigationEnabled)
+         guard !settings.navigationEnabled else { return }
++        remoteTask?.cancel()
++        remoteTask = nil
+         session.reset()
+         if palette.mode == .switchWindows { palette.prepare(mode: .launcher) }
+     }
+@@ -83,7 +86,19 @@ final class WindowSwitchCoordinator {
+     /// Every open sweeps anew, a restore included: hiding dropped the last snapshot.
+     func load() {
+         guard hasAccessibility() else { return }
+-        session.present(WindowSwitchSweep.snapshot(ranks: WindowZOrder.appRanks()))
++        remoteTask?.cancel()
++        let snapshot = WindowSwitchSweep.snapshot(
++            ranks: WindowZOrder.appRanks(),
++            sourcePID: paletteCoordinator.targetApp?.processIdentifier)
++        let applications = snapshot.applications
++        let knownWindowIDs = Set(snapshot.entries.map(\.windowID))
++        let revision = session.present(snapshot)
++        remoteTask = Task {
++            let remote = await WindowSwitchSweep.remoteSnapshot(
++                applications: applications, excluding: knownWindowIDs)
++            guard !Task.isCancelled else { return }
++            _ = session.merge(remote, revision: revision)
++        }
+     }
+ 
+     func activate(_ entry: WindowSwitchEntry) {
+@@ -104,7 +119,7 @@ final class WindowSwitchCoordinator {
+         guard !entry.isMinimized, hasAccessibility(), let element = liveElement(for: entry),
+             !AXWindowAccess.isFullScreen(element.window), AXWindowAccess.minimize(element.window)
+         else { return }
+-        session.markMinimized(entry.handle)
++        session.markMinimized(entry.windowID)
+     }
+ 
+     func hideApplication(_ entry: WindowSwitchEntry) {
+@@ -122,7 +137,7 @@ final class WindowSwitchCoordinator {
+     }
+ 
+     private func liveElement(for entry: WindowSwitchEntry) -> WindowSwitchSweep.Element? {
+-        guard let element = session.element(for: entry.handle), !element.app.isTerminated
++        guard let element = session.element(for: entry.windowID), !element.app.isTerminated
+         else { return nil }
+         return element
+     }
+diff --git a/Tinycast/Features/WindowSwitcher/UI/WindowSwitchScreen.swift b/Tinycast/Features/WindowSwitcher/UI/WindowSwitchScreen.swift
+index a536c516..537386d5 100644
+--- a/Tinycast/Features/WindowSwitcher/UI/WindowSwitchScreen.swift
++++ b/Tinycast/Features/WindowSwitcher/UI/WindowSwitchScreen.swift
+@@ -3,6 +3,7 @@ import SwiftUI
+ struct WindowSwitchScreen: PaletteScreen {
+     let session: WindowSwitchSession
+     let core: AppCore
++    let metrics: InterfaceMetrics
+ 
+     var rows: [WindowSwitchEntry] { session.filtered }
+ 
+@@ -56,6 +57,24 @@ struct WindowSwitchScreen: PaletteScreen {
+ 
+     func secondary(at selection: Int) -> Bool { false }
+ 
++    func headerAccessory(
++        at selection: Int, focus: FocusState<String?>.Binding
++    ) -> PaletteHeaderAccessory? {
++        PaletteHeaderAccessory(
++            width: metrics.spacing.md + metrics.size.rowIcon,
++            fieldNames: [], firstIncompleteField: nil,
++            placement: .besideSearchField,
++            view: AnyView(
++                HStack(spacing: 0) {
++                    Color.clear.frame(width: metrics.spacing.md)
++                    ProgressView()
++                        .controlSize(.small)
++                        .frame(width: metrics.size.rowIcon, height: metrics.size.rowIcon)
++                        .opacity(session.isDiscovering ? 1 : 0)
++                        .accessibilityHidden(!session.isDiscovering)
++                }))
++    }
++
+     func perform(_ shortcut: PaletteShortcut, at selection: Int) -> Bool {
+         guard let entry = entry(at: selection) else { return false }
+         let coordinator = core.windowSwitchCoordinator
+diff --git a/Tinycast/Palette/RootPaletteView.swift b/Tinycast/Palette/RootPaletteView.swift
+index e76cbec5..c4c972a2 100644
+--- a/Tinycast/Palette/RootPaletteView.swift
++++ b/Tinycast/Palette/RootPaletteView.swift
+@@ -88,7 +88,7 @@ struct RootPaletteView: View {
+             return MenuSearchScreen(
+                 session: menuSearch, core: core, vm: vm, openActions: openActions)
+         case .switchWindows:
+-            return WindowSwitchScreen(session: windowSwitch, core: core)
++            return WindowSwitchScreen(session: windowSwitch, core: core, metrics: metrics)
+         case .rooms:
+             return RoomsScreen(coordinator: core.roomCoordinator, session: core.roomSession, vm: vm)
+         case .roomWindows:
+diff --git a/docs/features/navigation.md b/docs/features/navigation.md
+index c0721227..594e46b3 100644
+--- a/docs/features/navigation.md
++++ b/docs/features/navigation.md
+@@ -11,19 +11,17 @@ launcher and a still-recorded shortcut for any does nothing.
+ 
+ ## Invariants
+ 
+-- **The sweep is synchronous, and that is deliberate.** `WindowSwitchSweep.snapshot` visits apps and
+-  their windows (one level, two AX reads each), where the menu walk descends a tree. A
+-  `Task.detached` here would buy a "Reading windows…" state nobody would ever see, and cost a
+-  revision counter to keep superseded sweeps from publishing. `WindowInventory` made the same call.
+-- **A live `AXUIElement` never leaves the main actor, and never outlives the show.** The pure entry
+-  carries a `handle`; `WindowSwitchSession` holds the `handle → Element` table `@ObservationIgnored`
+-  and drops it in `reset()`, which `hidePalette` and every mode change call. So every open sweeps
+-  anew (`WindowSwitchCoordinator.load()`, through `PaletteCoordinator.onScreenOpening`), and a
+-  screen restored inside the Pop to Root window lists today's windows, not an empty snapshot.
++- **Visible-Space results are synchronous; other-Space discovery is bounded and concurrent.** The
++  first list opens immediately from `AXWindows`. A task group searches WindowServer's missing window
++  ids through remote AX tokens, with a 250 ms pass per app, a 500 ms focused-element probe, and up to
++  two seconds of dense scanning for the invoking app. A revision prevents stale results from merging.
++- **A live `AXUIElement` never crosses an actor and never outlives the show.** Entries use stable
++  WindowServer ids. `WindowSwitchSession` retains live elements and remote references as ignored
++  observation state, then drops them in `reset()`.
+ - **Nothing in `Model/` knows what a window is.** `WindowSwitchEntry` takes `appRank` as a number
+   someone else measured, so `WindowSwitchOrder` and `WindowSwitchQuery` stay Foundation-only and the
+   harness compiles the shipped sources.
+-- **The order is total.** `(isMinimized, appRank, appName, handle)`, so a sweep that enumerated apps
++- **The order is total.** `(isMinimized, appRank, appName, order, windowID)`, so a sweep that enumerated apps
+   in a different order sorts identically, and minimized windows are always one run at the end rather
+   than interleaved.
+ - **Accessibility is gated twice**, on open and again on activate: a grant revoked while the palette
+@@ -39,13 +37,13 @@ launcher and a still-recorded shortcut for any does nothing.
+ 
+ | Piece                               | Holds                                                              |
+ | ----------------------------------- | ------------------------------------------------------------------ |
+-| `Model/WindowSwitchEntry.swift`     | one row: handle, app, title, minimized, rank, search fields        |
++| `Model/WindowSwitchEntry.swift`     | one row: WindowServer id, app, title, minimized, rank, search fields |
+ | `Model/WindowSwitchOrder.swift`     | the MRU sort, pure and total                                       |
+ | `Model/WindowSwitchPolicy.swift`    | which windows the sweep offers, pure                               |
+ | `Model/WindowSwitchQuery.swift`     | ranking over `SearchRelevance`, capped at 200 rows                 |
+ | `Service/WindowZOrder.swift`        | the one `CGWindowList` call: per-pid front rank                    |
+-| `Service/WindowSwitchSweep.swift`   | the AX sweep, and the live element table it hands back             |
+-| `Service/WindowSwitchSession.swift` | the observable state: snapshot, filtered rows, elements, exits     |
++| `Service/WindowSwitchSweep.swift`   | the AX sweep, remote discovery, and live element table              |
++| `Service/WindowSwitchSession.swift` | observable rows, live elements, remote references, exits           |
+ | `UI/WindowSwitchCoordinator.swift`  | show, activate, the ⌘K actions, the switch, the failure reports    |
+ | `UI/WindowSwitchScreen.swift`       | the `PaletteScreen` conformance, the ⌘K menu, the two empty states |
+ | `UI/WindowSwitchList.swift`         | the list and its row: app icon, title, app name                    |
+@@ -58,12 +56,10 @@ layer 0 (the normal window band, not the menu bar, Dock or overlay panels) and r
+ pid first appears. Only `kCGWindowName` is permission-gated, and titles come from AX instead, so the
+ call needs no Screen Recording grant.
+ 
+-The rank is therefore **per app, not per window**: mapping a `CGWindowID` onto an `AXUIElement` needs
+-the private `_AXUIElementGetWindow`, and the app's own `kAXWindowsAttribute` order already gives the
+-windows inside one app front-to-back. [Rooms](window-rooms.md#invariants) do resolve that symbol, in
+-`AXWindowAccess.windowID(of:)`, because a parked window's way back must outlive its element; the
+-switcher keeps its per-app rank, which needs nothing private. An app with nothing on screen (everything minimized, or every
+-window on another Space) gets no rank at all and sorts after the ranked ones by name.
++The rank is **per app**; the app's own AX window order supplies order within the app. The switcher
++uses `_AXUIElementGetWindow` to match AX elements to WindowServer ids, including windows on other
++Spaces, and remote references let activation reconstruct an element after the initial sweep. An app
++with nothing on screen gets no rank and sorts after ranked apps by name.
+ 
+ The alternative was a long-lived `NSWorkspace.didActivateApplicationNotification` observer with its
+ own LRU and its own lifetime. This needs neither, and it is right on the first summon after launch
+@@ -73,7 +69,8 @@ rather than after the user has switched apps once.
+ 
+ `WindowSwitchSweep` walks `WindowInventory.candidates()` (regular-policy, non-terminated, not us)
+ and takes every window `WindowSwitchPolicy` accepts: a standard-subrole one, or a minimized one that
+-still has a minimize button. That is looser than
++still has a minimize button. It then asks WindowServer for missing layer-zero window ids and resolves
++those through remote AX tokens. That is looser than
+ `WindowInventory.eligibleFrame` in two ways that both matter here: a **minimized** window is exactly
+ what a switcher is for, and a window on another Space reports no frame until it is raised, so
+ requiring one would hide it.
+@@ -84,8 +81,10 @@ alone drops exactly the rows a switcher exists for. A sheet cannot minimize, so
+ is what still tells a minimized window from a real dialog. The policy is Foundation-only, so the
+ harness covers the rule rather than the attribute reads.
+ 
+-Each element gets a 0.2 s messaging timeout, the same as the layout inventory and the menu walk, so
+-one hung app cannot stall the summon.
++Each element gets a 0.2 s messaging timeout. Remote discovery runs concurrently and never delays the
++initial palette. A small header spinner stays visible until the merge finishes, and its reserved slot
++keeps the search field from moving. A focused-element probe samples sparse ids, then the invoking app
++gets a bounded dense scan if needed. A descendant can resolve its containing standard window.
+ 
+ The app icon rides on the entry as a `FileIconStamp` and its bundle URL, and the row draws it through
+ `EntryIconView(source: .file(stamp:))`, so `IconCache` decodes once per app however many windows it
+@@ -167,10 +166,10 @@ window's app quit between the sweep and the ↵.
+ 
+ ## Testing
+ 
+-`Tests/WindowSwitchTests.swift` covers the pure half: the handle-derived id, the untitled-window
+-fallback, the name/owner split in the search fields, the MRU order and its totality under a shuffled
+-sweep, the minimized run at the end, which windows the sweep offers, ranking, and the 200-row cap
+-under both an empty and a matching query.
++`Tests/WindowSwitchTests.swift` covers the pure half: the WindowServer-derived id, untitled-window
++fallback, name/owner search fields, MRU order and totality, which windows the sweep offers,
++remote-result merging and deduplication, the minimized run at the end, ranking, and the 200-row cap
++under empty and matching queries.
+ 
+ `WindowZOrder` and `WindowSwitchSweep` are not compiled into the harness and have no automated
+ coverage; the AX and `CGWindowList` paths need manual verification, particularly:

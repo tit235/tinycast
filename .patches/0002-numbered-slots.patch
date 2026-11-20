@@ -1,0 +1,1434 @@
+diff --git a/Scripts/run-tests.sh b/Scripts/run-tests.sh
+index 0dc78a2c..2dd0568f 100755
+--- a/Scripts/run-tests.sh
++++ b/Scripts/run-tests.sh
+@@ -135,7 +135,7 @@ run ScopesTests            $L/SearchScopes.swift
+ run AppNameTests           Tinycast/Platform/AppDisplayName.swift \
+                            Tinycast/Platform/BundleLocalization.swift \
+                            $L/SearchRelevance.swift
+-run FavoritesTests         $L/FavoriteSlots.swift
++run FavoritesTests         $L/NumberSlots.swift
+ run AppInstallationTests   $L/SearchRelevance.swift $L/ScriptRomanization.swift \
+                            $L/LauncherMatch.swift $L/EntryNaming.swift $L/LauncherOrder.swift \
+                            $L/LauncherRankingStore.swift $L/LauncherSuggestions.swift $L/SearchScopes.swift \
+@@ -293,7 +293,7 @@ run PaletteMenuClickTests  Tinycast/Platform/Appearance.swift \
+                            Tinycast/DesignSystem/Interaction/Motion.swift \
+                            Tinycast/DesignSystem/Interaction/AnimatedPanel.swift \
+                            Tinycast/Palette/PalettePanel.swift \
+-                           Tinycast/DesignSystem/IconTint.swift
++                           Tinycast/DesignSystem/IconTint.swift $L/NumberSlots.swift
+ run FormInputTests         Tinycast/Platform/Appearance.swift \
+                            Tinycast/DesignSystem/Theme.swift \
+                            Tinycast/DesignSystem/InterfaceMetrics.swift \
+diff --git a/Tests/ClipboardTests.swift b/Tests/ClipboardTests.swift
+index 05b4c9dc..a0f52260 100644
+--- a/Tests/ClipboardTests.swift
++++ b/Tests/ClipboardTests.swift
+@@ -16,7 +16,6 @@ struct ClipboardTests {
+         editHonoursTheCaptureLimit()
+         pinsSurvivePruningAndTheWindow()
+         pinsLeadFilteredSearches()
+-        pinnedSlotResolutionUsesVisiblePins()
+         landingSkipsThePins()
+         textFormClassification()
+         colorParsing()
+@@ -282,44 +281,6 @@ struct ClipboardTests {
+         }
+     }
+ 
+-    /// Slot picks are taken from the visible pinned block after query/filter, not from all pins.
+-    static func pinnedSlotResolutionUsesVisiblePins() {
+-        withStore { store, _ in
+-            store.addText("alpha one", sourceBundleID: nil)
+-            store.addText("beta two", sourceBundleID: nil)
+-            store.addText("beta three", sourceBundleID: nil)
+-            store.addText("plain text", sourceBundleID: nil)
+-
+-            store.togglePinned(item(store, "alpha one"))
+-            store.togglePinned(item(store, "beta two"))
+-            store.togglePinned(item(store, "beta three"))
+-
+-            expect(
+-                store.pinnedItem(at: 0, in: "", filter: .all)?.text == "alpha one",
+-                "slot 1 maps to the first pinned row")
+-            expect(
+-                store.pinnedItem(at: 2, in: "", filter: .all)?.text == "beta three",
+-                "slot 3 maps to the third pinned row")
+-            expect(
+-                store.pinnedItem(at: 3, in: "", filter: .all) == nil,
+-                "missing pinned slot returns nil")
+-
+-            expect(
+-                store.pinnedItem(at: 0, in: "beta", filter: .all)?.text == "beta two",
+-                "query narrows the pinned block before slot mapping")
+-            expect(
+-                store.pinnedItem(at: 1, in: "beta", filter: .all)?.text == "beta three",
+-                "slot mapping follows visible pinned order under query")
+-            expect(
+-                store.pinnedItem(at: 2, in: "beta", filter: .all) == nil,
+-                "query can remove pinned slots from reach")
+-
+-            expect(
+-                store.pinnedItem(at: 0, in: "", filter: .link) == nil,
+-                "filter applies before pinned slot mapping")
+-        }
+-    }
+-
+     /// A reset passes the pins for the newest clip; a typed query lands on its first match.
+     static func landingSkipsThePins() {
+         withStore { store, _ in
+@@ -616,6 +577,15 @@ struct ClipboardTests {
+             expect(
+                 texts(store, filter: .link) == ["https://apple.com", "second.link.dev"],
+                 "a pinned link leads its filtered block")
++
++            store.addFiles(
++                ["/Users/me/Desktop/Shot.png", "/Users/me/Desktop/Report.pdf"], sourceBundleID: nil)
++            expect(
++                texts(store, filter: .image) == ["/Users/me/Desktop/Shot.png"],
++                "an image copied in Finder is an image")
++            expect(
++                texts(store, filter: .file) == ["/Users/me/Desktop/Report.pdf"],
++                "so Files Only leaves it out, and keeps a PDF")
+         }
+     }
+ 
+diff --git a/Tests/FavoritesTests.swift b/Tests/FavoritesTests.swift
+index 23ee1566..7ad585a6 100644
+--- a/Tests/FavoritesTests.swift
++++ b/Tests/FavoritesTests.swift
+@@ -15,36 +15,62 @@ struct FavoritesTests {
+         }
+ 
+         // Ten digit keys is the ceiling: there is no ⌘10, so the eleventh favorite gets no chord.
+-        check("ten slots", FavoriteSlots.digits.count == 10)
+-        check("no digit repeats", Set(FavoriteSlots.digits).count == FavoriteSlots.digits.count)
++        check("ten slots", NumberSlots.digits.count == 10)
++        check("no digit repeats", Set(NumberSlots.digits).count == NumberSlots.digits.count)
+ 
+-        check("⌘1 is the first favorite", FavoriteSlots.index(for: "1") == 0)
+-        check("⌘9 is the ninth", FavoriteSlots.index(for: "9") == 8)
+-        check("⌘0 is the tenth, not the first", FavoriteSlots.index(for: "0") == 9)
+-        check("a letter is not a slot", FavoriteSlots.index(for: "a") == nil)
++        check("⌘1 is the first favorite", NumberSlots.index(for: "1") == 0)
++        check("⌘9 is the ninth", NumberSlots.index(for: "9") == 8)
++        check("⌘0 is the tenth, not the first", NumberSlots.index(for: "0") == 9)
++        check("a letter is not a slot", NumberSlots.index(for: "a") == nil)
+ 
+         let numberRowKeyCodes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25, 29]
+         for (index, keyCode) in numberRowKeyCodes.enumerated() {
+             check(
+                 "physical number-row keycode \(keyCode) maps to slot \(index)",
+-                FavoriteSlots.index(forKeyCode: keyCode) == index)
++                NumberSlots.index(forKeyCode: keyCode) == index)
+         }
+-        check("unknown keycode is not a slot", FavoriteSlots.index(forKeyCode: 0) == nil)
++        check("unknown keycode is not a slot", NumberSlots.index(forKeyCode: 0) == nil)
+ 
+-        check("the first row shows 1", FavoriteSlots.digit(at: 0) == "1")
+-        check("the tenth row shows 0", FavoriteSlots.digit(at: 9) == "0")
+-        check("the eleventh row shows nothing", FavoriteSlots.digit(at: 10) == nil)
+-        check("a negative index shows nothing", FavoriteSlots.digit(at: -1) == nil)
++        check("the first row shows 1", NumberSlots.digit(at: 0) == "1")
++        check("the tenth row shows 0", NumberSlots.digit(at: 9) == "0")
++        check("the eleventh row shows nothing", NumberSlots.digit(at: 10) == nil)
++        check("a negative index shows nothing", NumberSlots.digit(at: -1) == nil)
+ 
+         // The row overlay and the key handler must agree, or a row advertises another's chord.
+-        for index in FavoriteSlots.digits.indices {
+-            guard let digit = FavoriteSlots.digit(at: index) else {
++        for index in NumberSlots.digits.indices {
++            guard let digit = NumberSlots.digit(at: index) else {
+                 check("slot \(index) has a digit", false)
+                 continue
+             }
+-            check("slot \(index) round-trips", FavoriteSlots.index(for: digit) == index)
++            check("slot \(index) round-trips", NumberSlots.index(for: digit) == index)
+         }
+ 
++        for hasMeetingCard in [false, true] {
++            let slots = NumberSlots(hasMeetingCard: hasMeetingCard)
++            let firstRow = hasMeetingCard ? 1 : 0
++            for slot in 0..<10 {
++                let row = slot + firstRow
++                check("activation skips only the meeting card: slot \(slot), meeting \(hasMeetingCard)",
++                      slots.selection(at: slot, rowCount: 11) == row)
++                check("displayed chord matches activation: row \(row), meeting \(hasMeetingCard)",
++                      slots.digit(forRow: row) == NumberSlots.digits[slot])
++            }
++            check("no eleventh chord", slots.digit(forRow: firstRow + 10) == nil)
++            check("missing result is not clamped", slots.selection(at: 8, rowCount: 2) == nil)
++            check("empty list has no action", slots.selection(at: 0, rowCount: 0) == nil)
++            check("eleventh slot cannot activate", slots.selection(at: 10, rowCount: 20) == nil)
++            check("negative slot cannot activate", slots.selection(at: -1, rowCount: 20) == nil)
++        }
++        let meetingSlots = NumberSlots(hasMeetingCard: true)
++        check("a timed meeting never advertises a numbered chord", meetingSlots.digit(forRow: 0) == nil)
++        check("a meeting alone cannot take the first favorite chord",
++              meetingSlots.selection(at: 0, rowCount: 1) == nil)
++        check("the tenth favorite keeps Cmd0 below a meeting",
++              meetingSlots.selection(at: 9, rowCount: 11) == 10)
++        let querySlots = NumberSlots(hasMeetingCard: false)
++        check("typed calculator and color cards keep Cmd1", querySlots.digit(forRow: 0) == "1")
++        check("typed card activation keeps flat row zero", querySlots.selection(at: 0, rowCount: 3) == 0)
++
+         print(failures == 0 ? "\nALL PASSED" : "\n\(failures) failed")
+         if failures > 0 { exit(1) }
+     }
+diff --git a/Tests/PaletteMenuClickTests.swift b/Tests/PaletteMenuClickTests.swift
+index f7fed882..34a1de54 100644
+--- a/Tests/PaletteMenuClickTests.swift
++++ b/Tests/PaletteMenuClickTests.swift
+@@ -7,6 +7,7 @@ final class PaletteState {
+     var menuOpen = false { didSet { onMenuOpenChanged?(menuOpen) } }
+     var onMenuOpenChanged: ((Bool) -> Void)?
+     var isComposing = false
++    var isControlListOpen = false
+     var searchFieldFrame = CGRect.zero
+     var mode = PaletteMode.launcher
+ 
+@@ -16,7 +17,7 @@ final class PaletteState {
+ }
+ 
+ enum PaletteMode {
+-    case launcher, quicklinkEditor
++    case launcher, clipboard, quicklinkEditor, switchWindows
+     var isNativeEditor: Bool { self == .quicklinkEditor }
+ }
+ 
+@@ -88,6 +89,54 @@ struct PaletteMenuClickTests {
+             panel.sendEvent(event)
+         }
+ 
++        var slots: [Int] = []
++        panel.onNumberSlot = { slots.append($0) }
++        func numberKey(_ keyCode: UInt16, flags: NSEvent.ModifierFlags = .command,
++                       repeated: Bool = false) {
++            guard let event = NSEvent.keyEvent(
++                with: .keyDown, location: .zero, modifierFlags: flags,
++                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
++                context: nil, characters: "&", charactersIgnoringModifiers: "&",
++                isARepeat: repeated, keyCode: keyCode)
++            else { fatalError("key event creation") }
++            panel.sendEvent(event)
++        }
++        numberKey(18)
++        numberKey(29)
++        check(slots == [0, 9], "physical digits dispatch synchronously despite layout characters")
++        for flags: NSEvent.ModifierFlags in [[], [.command, .shift], [.command, .option],
++                                            [.command, .control]] {
++            numberKey(19, flags: flags)
++        }
++        numberKey(19, repeated: true)
++        state.menuOpen = true
++        numberKey(19)
++        state.menuOpen = false
++        state.isControlListOpen = true
++        numberKey(19)
++        state.isControlListOpen = false
++        state.mode = .quicklinkEditor
++        numberKey(19)
++        check(slots == [0, 9], "modifiers, repeats, menus and other screens cannot activate slots")
++        state.mode = .clipboard
++        numberKey(19)
++        check(slots == [0, 9, 1], "clipboard retains physical pinned slots")
++        state.mode = .launcher
++        let editor = NSTextView(frame: .zero)
++        panel.contentView?.addSubview(editor)
++        panel.makeFirstResponder(editor)
++        editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0),
++                             replacementRange: NSRange(location: NSNotFound, length: 0))
++        check(editor.hasMarkedText(), "fixture has real AppKit marked text")
++        numberKey(20)
++        check(slots == [0, 9, 1], "IME composition keeps number keys from launching results")
++        editor.unmarkText()
++        numberKey(20)
++        check(slots == [0, 9, 1, 2], "numbered activation resumes after composition")
++        panel.makeFirstResponder(nil)
++        editor.removeFromSuperview()
++        panel.onNumberSlot = nil
++
+         var dismissals = 0
+         func openMenu() {
+             state.menuOpen = true
+diff --git a/Tests/PaletteShortcutTests.swift b/Tests/PaletteShortcutTests.swift
+index fb652742..dbf0910b 100644
+--- a/Tests/PaletteShortcutTests.swift
++++ b/Tests/PaletteShortcutTests.swift
+@@ -57,6 +57,9 @@ struct PaletteShortcutTests {
+         expect(
+             resolve("t", command: true, shift: true, option: true), .copyText,
+             "an extra Option still reads ⇧⌘T")
++        expect(resolve("s", command: true), .saveAsSnippet, "⌘S saves a clipboard entry as a snippet")
++        expect(resolve("s", command: true, shift: true), nil, "⇧⌘S is no row chord")
++        expect(resolve("s"), nil, "a bare S stays with the search field")
+         expect(resolve("y", command: true), .quickLook, "⌘Y is the Quick Look chord")
+         expect(resolve("y", command: true, shift: true), .quickLook, "an extra Shift still reads ⌘Y")
+         expect(resolve("o", command: true), .openInApp, "⌘O opens the row in its own app")
+@@ -110,7 +113,7 @@ struct PaletteShortcutTests {
+             .hideApp, .restart, .edit, .duplicate, .showInFinder
+         ]
+         let anywhere: [PaletteShortcut] = [
+-            .commandDelete, .delete, .deleteAll, .pin, .favoriteSlot(0), .continueInChat, .newItem,
++            .commandDelete, .delete, .deleteAll, .pin, .numberSlot(0), .continueInChat, .newItem,
+             .settings, .copyCalculation
+         ]
+         for shortcut in expanded {
+@@ -126,7 +129,7 @@ struct PaletteShortcutTests {
+             .newItem, .settings, .edit, .duplicate, .showInFinder
+         ]
+         let leaving: [PaletteShortcut] = [
+-            .commandDelete, .pasteFile, .quit, .forceQuit, .hideApp, .restart, .pin, .favoriteSlot(0),
++            .commandDelete, .pasteFile, .quit, .forceQuit, .hideApp, .restart, .pin, .numberSlot(0),
+             .continueInChat
+         ]
+         for shortcut in closing {
+diff --git a/Tinycast/Features/Clipboard/Model/ClipboardStore.swift b/Tinycast/Features/Clipboard/Model/ClipboardStore.swift
+index 43456c98..be7354ef 100644
+--- a/Tinycast/Features/Clipboard/Model/ClipboardStore.swift
++++ b/Tinycast/Features/Clipboard/Model/ClipboardStore.swift
+@@ -24,6 +24,9 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
+     /// The referenced path, so no call site re-derives a file entry's meaning from `text`.
+     var filePath: String? { kind == .file ? text : nil }
+ 
++    /// A referenced file the type filter files under images, by its extension rather than its kind.
++    var isImageFile: Bool { filePath.map { ClipboardFileKind.of(path: $0) == .image } ?? false }
++
+     /// What Paste as Plain Text writes: the text, or a file's path in place of the file.
+     var plainText: String? { kind == .image ? nil : text }
+ 
+@@ -31,7 +34,7 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
+     var offersTextExtraction: Bool {
+         switch kind {
+         case .image: return imagePath != nil
+-        case .file: return filePath.map { ClipboardFileKind.of(path: $0) == .image } ?? false
++        case .file: return isImageFile
+         case .text: return false
+         }
+     }
+@@ -603,12 +606,6 @@ final class ClipboardStore {
+         search(query, filter: filter).firstIndex { $0.id == item.id }
+     }
+ 
+-    /// The Nth visible pinned entry under `query` and `filter`, where 0 is the first pinned row.
+-    func pinnedItem(at index: Int, in query: String, filter: ClipboardFilter) -> ClipboardItem? {
+-        guard index >= 0 else { return nil }
+-        return search(query, filter: filter).prefix(while: \.isPinned).dropFirst(index).first
+-    }
+-
+     /// Where a reset lands: past the pins to the newest clip, or on the first match once typed.
+     func landingIndex(in query: String, filter: ClipboardFilter) -> Int {
+         guard query.trimmingCharacters(in: .whitespaces).isEmpty else { return 0 }
+@@ -719,8 +716,22 @@ final class ClipboardStore {
+         defer { sqlite3_close_v2(db) }
+         sqlite3_exec(db, "PRAGMA cache_size=-2048", nil, nil, nil)
+         sqlite3_progress_handler(db, 1000, { _ in Task.isCancelled ? 1 : 0 }, nil)
++        // Shares `isImageFile`'s classifier, so the LIMIT below counts only the filter's rows.
++        sqlite3_create_function_v2(
++            db, "is_image_file", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nil,
++            { context, _, values in
++                guard let values, let text = sqlite3_value_text(values[0]) else {
++                    sqlite3_result_int(context, 0)
++                    return
++                }
++                let count = Int(sqlite3_value_bytes(values[0]))
++                let path = String(decoding: UnsafeBufferPointer(start: text, count: count), as: UTF8.self)
++                sqlite3_result_int(context, ClipboardFileKind.of(path: path) == .image ? 1 : 0)
++            }, nil, nil, nil)
+         let isShort = query.count < 3
+-        let kind = filter == .image ? "i.kind = 'image'" : filter == .file ? "i.kind = 'file'" : "1"
++        let kind =
++            filter == .image ? "(i.kind = 'image' OR (i.kind = 'file' AND is_image_file(i.text)))"
++            : filter == .file ? "(i.kind = 'file' AND NOT is_image_file(i.text))" : "1"
+         let columns = "i.id, i.kind, i.text, i.image_path, i.created_at, i.source_app, i.pinned_at"
+         let sql =
+             isShort
+diff --git a/Tinycast/Features/Clipboard/UI/ClipboardScreen.swift b/Tinycast/Features/Clipboard/UI/ClipboardScreen.swift
+index cf729bf7..fd751dde 100644
+--- a/Tinycast/Features/Clipboard/UI/ClipboardScreen.swift
++++ b/Tinycast/Features/Clipboard/UI/ClipboardScreen.swift
+@@ -44,7 +44,12 @@ struct ClipboardScreen: PaletteScreen {
+             deleteAll()
+             return true
+         case .pin: return pin(at: selection)
+-        case .favoriteSlot(let index): return activatePinned(at: index)
++        case .numberSlot(let index): return activateSlot(at: index)
++        case .saveAsSnippet:
++            guard core.settings.snippetsEnabled, let item = item(at: selection), item.kind == .text
++            else { return false }
++            core.clipboardCoordinator.saveAsSnippet(item)
++            return true
+         case .copyText:
+             guard let item = item(at: selection), item.offersTextExtraction else { return false }
+             core.clipboardCoordinator.copyImageText(item)
+@@ -61,11 +66,10 @@ struct ClipboardScreen: PaletteScreen {
+         }
+     }
+ 
+-    private func activatePinned(at index: Int) -> Bool {
+-        guard let item = store.pinnedItem(at: index, in: vm.query, filter: vm.clipboardFilter) else {
+-            return false
+-        }
+-        core.clipboardCoordinator.activate(item)
++    private func activateSlot(at index: Int) -> Bool {
++        let rows = rows
++        guard rows.indices.contains(index) else { return false }
++        core.clipboardCoordinator.activate(rows[index])
+         return true
+     }
+ 
+@@ -209,6 +213,15 @@ enum ClipboardActionsMenu {
+             ) {
+                 core.clipboardCoordinator.togglePinnedClip(item)
+             })
++        if item.kind == .text, core.settings.snippetsEnabled {
++            items.append(
++                PopoverMenuItem(
++                    title: String(localized: "Save as Snippet"), systemImage: "text.quote",
++                    shortcut: "⌘S"
++                ) {
++                    core.clipboardCoordinator.saveAsSnippet(item)
++                })
++        }
+         if item.offersTextExtraction {
+             items.append(
+                 PopoverMenuItem(
+diff --git a/Tinycast/Features/Clipboard/UI/ClipboardView.swift b/Tinycast/Features/Clipboard/UI/ClipboardView.swift
+index a6f9ec51..3f885890 100644
+--- a/Tinycast/Features/Clipboard/UI/ClipboardView.swift
++++ b/Tinycast/Features/Clipboard/UI/ClipboardView.swift
+@@ -36,16 +36,15 @@ struct ClipboardList: View {
+     private var rows: [Row] {
+         var rows: [Row] = []
+         var currentTitle: String?
+-        var pinnedSlot = 0
+-        for item in results {
+-            let title = item.isPinned ? String(localized: "Pinned") : DateBucket(for: item.createdAt).title
++        let buckets = DateBucket.Boundaries()
++        for (offset, item) in results.enumerated() {
++            let title =
++                item.isPinned ? String(localized: "Pinned") : buckets.bucket(for: item.createdAt).title
+             if title != currentTitle {
+                 rows.append(.header(title))
+                 currentTitle = title
+             }
+-            let slot = item.isPinned ? FavoriteSlots.digit(at: pinnedSlot) : nil
+-            if item.isPinned { pinnedSlot += 1 }
+-            rows.append(.item(item, slot: slot))
++            rows.append(.item(item, slot: NumberSlots.digit(at: offset)))
+         }
+         return rows
+     }
+@@ -109,17 +108,33 @@ enum DateBucket: Int {
+         }
+     }
+ 
+-    init(for date: Date, now: Date = Date(), calendar: Calendar = .current) {
+-        if calendar.isDateInToday(date) {
+-            self = .today
+-        } else if calendar.isDateInYesterday(date) {
+-            self = .yesterday
+-        } else if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
+-            self = .thisWeek
+-        } else if calendar.isDate(date, equalTo: now, toGranularity: .month) {
+-            self = .thisMonth
+-        } else {
+-            self = .earlier
++    /// Resolved once per list; asking the calendar per row costs ~5 ms on a 1,000-entry history.
++    struct Boundaries {
++        private let today: DateInterval?
++        private let yesterday: DateInterval?
++        private let week: DateInterval?
++        private let month: DateInterval?
++
++        init(now: Date = Date(), calendar: Calendar = .current) {
++            today = calendar.dateInterval(of: .day, for: now)
++            yesterday = calendar.date(byAdding: .day, value: -1, to: now)
++                .flatMap { calendar.dateInterval(of: .day, for: $0) }
++            week = calendar.dateInterval(of: .weekOfYear, for: now)
++            month = calendar.dateInterval(of: .month, for: now)
++        }
++
++        func bucket(for date: Date) -> DateBucket {
++            if Self.date(date, isIn: today) { return .today }
++            if Self.date(date, isIn: yesterday) { return .yesterday }
++            if Self.date(date, isIn: week) { return .thisWeek }
++            if Self.date(date, isIn: month) { return .thisMonth }
++            return .earlier
++        }
++
++        /// Half-open, as the calendar's own day test is: `DateInterval.contains` takes in the end.
++        private static func date(_ date: Date, isIn interval: DateInterval?) -> Bool {
++            guard let interval else { return false }
++            return interval.start <= date && date < interval.end
+         }
+     }
+ }
+@@ -131,7 +146,7 @@ private struct ClipboardRow: View {
+     let selected: Bool
+     let imageURL: URL?
+     let ownsImage: Bool
+-    /// This row's ⌘-digit, or nil when it is not among the first ten visible pins.
++    /// This row's ⌘-digit, or nil when it is not among the first ten visible rows.
+     let slot: Character?
+     @Environment(PaletteState.self) private var palette
+     @State private var hovered = false
+diff --git a/Tinycast/Features/FileSearch/UI/FileSearchList.swift b/Tinycast/Features/FileSearch/UI/FileSearchList.swift
+index 146cf2c2..7c2c749c 100644
+--- a/Tinycast/Features/FileSearch/UI/FileSearchList.swift
++++ b/Tinycast/Features/FileSearch/UI/FileSearchList.swift
+@@ -60,18 +60,19 @@ struct FileSearchRow: View {
+     let result: FileSearchResult
+     let selected: Bool
+     let showsLocation: Bool
+-    let slot: Character?
++    let numberSlot: Character?
+     @Environment(PaletteState.self) private var palette
+     @State private var image: NSImage?
+     @State private var hovered = false
+ 
+     init(
+-        result: FileSearchResult, selected: Bool, showsLocation: Bool = false, slot: Character? = nil
++        result: FileSearchResult, selected: Bool, showsLocation: Bool = false,
++        numberSlot: Character? = nil
+     ) {
+         self.result = result
+         self.selected = selected
+         self.showsLocation = showsLocation
+-        self.slot = slot
++        self.numberSlot = numberSlot
+         _image = State(initialValue: IconCache.cachedFitted(forFile: result.id))
+     }
+ 
+@@ -114,10 +115,10 @@ struct FileSearchRow: View {
+                     .truncationMode(.middle)
+             }
+             Spacer(minLength: 0)
+-            if let slot, palette.commandHeld {
++            if let numberSlot, palette.commandHeld {
+                 HStack(spacing: metrics.spacing.xxs) {
+                     KeyCapChip(text: "⌘", style: .outline)
+-                    KeyCapChip(text: String(slot), style: .outline)
++                    KeyCapChip(text: String(numberSlot), style: .outline)
+                 }
+             } else if showsLocation {
+                 Text(result.isDirectory ? "Folder" : "File")
+diff --git a/Tinycast/Features/Launcher/Model/FavoriteSlots.swift b/Tinycast/Features/Launcher/Model/NumberSlots.swift
+similarity index 52%
+rename from Tinycast/Features/Launcher/Model/FavoriteSlots.swift
+rename to Tinycast/Features/Launcher/Model/NumberSlots.swift
+index 05811456..ff60619b 100644
+--- a/Tinycast/Features/Launcher/Model/FavoriteSlots.swift
++++ b/Tinycast/Features/Launcher/Model/NumberSlots.swift
+@@ -1,20 +1,30 @@
+ import Foundation
+ 
+-/// ⌘1…⌘9 then ⌘0 for the tenth; favorites past it are listed but carry no chord.
+-enum FavoriteSlots {
++struct NumberSlots {
++    let hasMeetingCard: Bool
++
++    private var firstRow: Int { hasMeetingCard ? 1 : 0 }
+     static let digits: [Character] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+ 
+-    /// ANSI number-row key codes in visual order 1…9,0. This is layout-independent.
+     private static let numberRowKeyCodes: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25, 29]
+ 
+-    /// The favorite a digit launches, or nil when that key is not a slot.
+     static func index(for digit: Character) -> Int? { digits.firstIndex(of: digit) }
+ 
+-    /// The favorite a physical number-row key launches, or nil when that key is not a slot.
+     static func index(forKeyCode keyCode: UInt16) -> Int? {
+         numberRowKeyCodes.firstIndex(of: keyCode)
+     }
+ 
++    func selection(at index: Int, rowCount: Int) -> Int? {
++        guard Self.digits.indices.contains(index) else { return nil }
++        let row = index + firstRow
++        return row < rowCount ? row : nil
++    }
++
++    func digit(forRow row: Int) -> Character? {
++        guard row >= firstRow else { return nil }
++        return Self.digit(at: row - firstRow)
++    }
++
+     static func digit(at index: Int) -> Character? {
+         digits.indices.contains(index) ? digits[index] : nil
+     }
+diff --git a/Tinycast/Features/Launcher/UI/LauncherList.swift b/Tinycast/Features/Launcher/UI/LauncherList.swift
+index c95856f6..a71067c6 100644
+--- a/Tinycast/Features/Launcher/UI/LauncherList.swift
++++ b/Tinycast/Features/Launcher/UI/LauncherList.swift
+@@ -70,7 +70,8 @@ struct LauncherList: View {
+         /// Its own case, because only this header carries a gear.
+         case fallbackHeader(String)
+         case card(LeadCard)
+-        case app(AppEntry)
++        /// `slot` is the row's ⌘-digit, carried from the section build rather than searched.
++        case app(AppEntry, slot: Character?)
+         case favorite(FavoritesStore.Item, index: Int)
+         case file(FileSearchResult, index: Int)
+         case fallback(AppEntry, index: Int)
+@@ -79,7 +80,7 @@ struct LauncherList: View {
+             case .header(let title): return "header-" + title
+             case .fallbackHeader: return "fallback-header"
+             case .card(let card): return card.rowID
+-            case .app(let app): return app.id
++            case .app(let app, _): return app.id
+             case .favorite(let favorite, _): return favorite.id
+             case .file(let result, _): return "file-" + result.id
+             case .fallback(let app, _): return "fallback-" + app.id
+@@ -87,6 +88,13 @@ struct LauncherList: View {
+         }
+     }
+ 
++    private var cardOffset: Int { card == nil ? 0 : 1 }
++
++    private var numberSlots: NumberSlots {
++        if case .meeting = card { return NumberSlots(hasMeetingCard: true) }
++        return NumberSlots(hasMeetingCard: false)
++    }
++
+     private var firstRowSelected: Bool {
+         if card != nil { return cardSelected }
+         return selectedRowID != nil && selectedRowID == (favorites.first?.id ?? results.first?.id)
+@@ -124,15 +132,21 @@ struct LauncherList: View {
+         }
+         if !meetings.isEmpty {
+             rows.append(.header(AppEntry.Kind.meeting.descriptor.sectionTitle.resolved()))
+-            rows.append(contentsOf: meetings.map { .app($0) })
++            rows.append(contentsOf: meetings.enumerated().map {
++                .app($1, slot: numberSlots.digit(forRow: cardOffset + favorites.count + $0))
++            })
+         }
+         if !suggestions.isEmpty {
+             rows.append(.header(String(localized: "Suggestions")))
+-            rows.append(contentsOf: suggestions.map { .app($0) })
++            rows.append(contentsOf: suggestions.enumerated().map {
++                .app($1, slot: numberSlots.digit(forRow: cardOffset + favorites.count + meetingCount + $0))
++            })
+         }
+         if !matches.isEmpty {
+             rows.append(.header(String(localized: "Results")))
+-            rows.append(contentsOf: matches.map { .app($0) })
++            rows.append(contentsOf: matches.enumerated().map {
++                .app($1, slot: numberSlots.digit(forRow: cardOffset + favorites.count + pinnedCount + $0))
++            })
+         }
+         // Publication order, so rows match the flat index.
+         let kinds: [AppEntry.Kind] = [
+@@ -140,10 +154,14 @@ struct LauncherList: View {
+             .snippet, .systemAction, .windowLayout, .windowRoom, .windowCommand, .customCommand,
+             .quickAction, .command
+         ]
++        var offset = cardOffset + favorites.count + pinnedCount + matchCount
+         for kind in kinds {
+             guard let group = grouped[kind], !group.isEmpty else { continue }
+             rows.append(.header(kind.descriptor.sectionTitle.resolved()))
+-            rows.append(contentsOf: group.map { .app($0) })
++            rows.append(contentsOf: group.enumerated().map {
++                .app($1, slot: numberSlots.digit(forRow: offset + $0))
++            })
++            offset += group.count
+         }
+         // A missing kind would make every later row activate its neighbour: assert instead.
+         assert(
+@@ -173,17 +191,21 @@ struct LauncherList: View {
+                                         configureHelp: String(localized: "Configure Fallbacks…"))
+                                 case .card(let card):
+                                     LeadCardView(card: card, selected: cardSelected)
++                                        .overlay(alignment: .topTrailing) {
++                                            LauncherNumberHint(digit: numberSlots.digit(forRow: 0))
++                                                .padding(.top, metrics.spacing.xs)
++                                        }
+                                         .contentShape(Rectangle())
+                                         .onTapGesture(perform: onActivateCard)
+                                         .onRightClick(perform: onCardActions)
+                                         .padding(.bottom, metrics.spacing.xs)
+                                         .selectionFrame(cardSelected)
+-                                case .app(let app):
++                                case .app(let app, let slot):
+                                     AppRow(
+                                         app: app,
+                                         selected: app.id == selectedRowID,
+                                         running: runningApps.isRunning(app),
+-                                        slot: nil
++                                        slot: slot
+                                     )
+                                     .contentShape(Rectangle())
+                                     .onRowTap(drag: drag(for: app)) { onActivate(app) }
+@@ -198,8 +220,9 @@ struct LauncherList: View {
+                                 case .file(let result, let index):
+                                     FileSearchRow(
+                                         result: result, selected: row.id == selectedRowID,
+-                                        showsLocation: true
+-                                    )
++                                        showsLocation: true,
++                                        numberSlot: numberSlots.digit(
++                                            forRow: cardOffset + favorites.count + results.count + index))
+                                     .contentShape(Rectangle())
+                                     .onRowTap(drag: result.rowDrag(dropped: onDropped)) {
+                                         files?.onActivate(index)
+@@ -209,7 +232,9 @@ struct LauncherList: View {
+                                 case .fallback(let app, let index):
+                                     AppRow(
+                                         app: app, selected: row.id == selectedRowID, running: false,
+-                                        slot: nil
++                                        slot: numberSlots.digit(
++                                            forRow: cardOffset + favorites.count + results.count
++                                                + (files?.results.count ?? 0) + index)
+                                     )
+                                     .contentShape(Rectangle())
+                                     .onTapGesture { fallbacks?.onActivate(index) }
+@@ -236,7 +261,7 @@ struct LauncherList: View {
+ 
+     @ViewBuilder
+     private func favoriteRow(_ favorite: FavoritesStore.Item, index: Int) -> some View {
+-        let slot = FavoriteSlots.digit(at: index)
++        let slot = numberSlots.digit(forRow: cardOffset + index)
+         switch favorite {
+         case .entry(let entry):
+             AppRow(
+@@ -245,7 +270,7 @@ struct LauncherList: View {
+         case .file(let file):
+             FileSearchRow(
+                 result: file, selected: favorite.id == selectedRowID,
+-                showsLocation: true, slot: slot)
++                showsLocation: true, numberSlot: slot)
+         }
+     }
+ 
+@@ -381,3 +406,19 @@ private struct AppRow: View {
+         .armedHover($hovered)
+     }
+ }
++
++private struct LauncherNumberHint: View {
++    let digit: Character?
++    @Environment(PaletteState.self) private var palette
++    @Environment(\.metrics) private var metrics
++
++    var body: some View {
++        if let digit, palette.commandHeld {
++            HStack(spacing: metrics.spacing.xxs) {
++                KeyCapChip(text: "⌘", style: .outline)
++                KeyCapChip(text: String(digit), style: .outline)
++            }
++            .padding(.trailing, metrics.spacing.md)
++        }
++    }
++}
+diff --git a/Tinycast/Features/Launcher/UI/LauncherScreen.swift b/Tinycast/Features/Launcher/UI/LauncherScreen.swift
+index 5794c7f7..fced4f74 100644
+--- a/Tinycast/Features/Launcher/UI/LauncherScreen.swift
++++ b/Tinycast/Features/Launcher/UI/LauncherScreen.swift
+@@ -34,6 +34,11 @@ struct LauncherScreen: PaletteScreen {
+     /// Resolved in `init`: the palette indexes this several times per event, so it can't recompute.
+     let rows: [Row]
+ 
++    var numberSlots: NumberSlots {
++        if case .meeting = rows.first { return NumberSlots(hasMeetingCard: true) }
++        return NumberSlots(hasMeetingCard: false)
++    }
++
+     init(
+         appIndex: AppIndex, favorites: FavoritesStore, visibility: VisibilityStore,
+         currencyRates: CurrencyRateStore, core: AppCore, vm: PaletteState, running: Bool,
+@@ -332,7 +337,7 @@ struct LauncherScreen: PaletteScreen {
+         case .edit: return editItem(at: selection)
+         case .copyPath: return copyQuicklink(at: selection)
+         case .copyFile: return copyDeepLink(at: selection)
+-        case .favoriteSlot(let index): return launchFavorite(at: index)
++        case .numberSlot(let index): return launchFavorite(at: index)
+         case .copyCalculation: return copyCalculation(at: selection)
+         case .openInApp, .showDetails:
+             guard let meeting = meeting(at: selection) else { return false }
+@@ -411,7 +416,6 @@ struct LauncherScreen: PaletteScreen {
+         return true
+     }
+ 
+-    /// ⌘1–⌘9/⌘0 — launch a favorite by position, in either palette size.
+     private func launchFavorite(at index: Int) -> Bool {
+         guard pinnedFavorites.indices.contains(index) else { return false }
+         activate(at: index + (leadCard == nil ? 0 : 1))
+diff --git a/Tinycast/Palette/MenuPanel.swift b/Tinycast/Palette/MenuPanel.swift
+index 591e2736..825e1f2b 100644
+--- a/Tinycast/Palette/MenuPanel.swift
++++ b/Tinycast/Palette/MenuPanel.swift
+@@ -30,7 +30,9 @@ final class MenuPanel: NSPanel, AnimatedPanel {
+         case .keyDown, .scrollWheel:
+             paletteState?.disarmHoverHighlight(pointerAt: NSEvent.mouseLocation)
+         case .flagsChanged:
+-            paletteState?.noteCommandHeld(event.modifierFlags.contains(.command))
++            paletteState?.noteCommandHeld(
++                event.modifierFlags.contains(.command)
++                    && event.modifierFlags.isDisjoint(with: [.shift, .option, .control, .function]))
+         default: break
+         }
+         if event.type == .keyDown, onKeyDown?(event) == true {
+diff --git a/Tinycast/Palette/PalettePanel.swift b/Tinycast/Palette/PalettePanel.swift
+index 28cf4f7b..1713c7b2 100644
+--- a/Tinycast/Palette/PalettePanel.swift
++++ b/Tinycast/Palette/PalettePanel.swift
+@@ -14,6 +14,7 @@ final class PalettePanel: NSPanel, AnimatedPanel {
+     var onEscape: (() -> Bool)?
+     /// Command chords the field editor swallows, plus the ones no main menu handles.
+     var onCommandShortcut: ((NSEvent) -> Bool)?
++    var onNumberSlot: ((Int) -> Void)?
+     /// The palette's typing context, handed over each time a field takes focus.
+     var onFieldEditorFocused: ((NSTextInputContext) -> Void)?
+     /// Inline argument fields use arrows at their text boundaries to continue their focus ring.
+@@ -187,7 +188,9 @@ final class PalettePanel: NSPanel, AnimatedPanel {
+         case .keyDown, .scrollWheel:
+             paletteState?.disarmHoverHighlight(pointerAt: NSEvent.mouseLocation)
+         case .flagsChanged:
+-            paletteState?.noteCommandHeld(event.modifierFlags.contains(.command))
++            paletteState?.noteCommandHeld(
++                event.modifierFlags.contains(.command)
++                    && event.modifierFlags.isDisjoint(with: [.shift, .option, .control, .function]))
+         default: break
+         }
+         defer { applyCursorPolicy(for: event) }
+@@ -224,6 +227,17 @@ final class PalettePanel: NSPanel, AnimatedPanel {
+         {
+             return
+         }
++        if event.type == .keyDown, !event.isARepeat,
++            event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
++            paletteState?.mode == .launcher || paletteState?.mode == .clipboard
++                || paletteState?.mode == .switchWindows,
++            paletteState?.menuOpen != true, paletteState?.isControlListOpen != true,
++            fieldEditor?.hasMarkedText() != true,
++            let index = NumberSlots.index(forKeyCode: event.keyCode), let onNumberSlot
++        {
++            onNumberSlot(index)
++            return
++        }
+         // The controller owns the chords the field editor or a missing main menu would eat.
+         if event.type == .keyDown,
+             event.modifierFlags.contains(.command),
+diff --git a/Tinycast/Palette/PaletteShortcut.swift b/Tinycast/Palette/PaletteShortcut.swift
+index 1cf4e2e1..30ba47d2 100644
+--- a/Tinycast/Palette/PaletteShortcut.swift
++++ b/Tinycast/Palette/PaletteShortcut.swift
+@@ -46,6 +46,8 @@ enum PaletteShortcut: Equatable {
+     case edit
+     /// ⌘D.
+     case duplicate
++    /// ⌘S, a clipboard entry's text kept as a snippet.
++    case saveAsSnippet
+     /// ⌘F, for a screen whose ⌘↵ already does something else.
+     case showInFinder
+     /// ⌥⌘,, the screen's own settings; ⌘, alone stays the app's.
+@@ -55,7 +57,7 @@ enum PaletteShortcut: Equatable {
+     /// ⌘., which AppKit binds to `cancelOperation:`, so it arrives as a token instead of a key.
+     case pin
+     /// ⌘1…⌘0, matched by key code in the panel and handed over as a slot.
+-    case favoriteSlot(Int)
++    case numberSlot(Int)
+ 
+     /// `matches` compares through the active layout, so the letters stay positional.
+     static func resolve(
+@@ -83,6 +85,7 @@ enum PaletteShortcut: Equatable {
+         if command, !shift, matches("n") { return .newItem }
+         if command, !shift, !option, !control, matches("e") { return .edit }
+         if command, !shift, matches("d") { return .duplicate }
++        if command, !shift, !option, !control, matches("s") { return .saveAsSnippet }
+         if command, option, matches(",") { return .settings }
+         if command, matches("j") { return .continueInChat }
+         return nil
+@@ -93,9 +96,9 @@ enum PaletteShortcut: Equatable {
+         switch self {
+         case .copyFile, .copyName, .copyPath, .copyText, .pasteFile, .quickLook, .openInApp,
+             .showDetails, .toggleFavorite, .hideFromSearch, .quit, .forceQuit, .minimizeWindow,
+-            .hideApp, .restart, .edit, .duplicate, .showInFinder:
++            .hideApp, .restart, .edit, .duplicate, .showInFinder, .saveAsSnippet:
+             true
+-        case .commandDelete, .delete, .deleteAll, .pin, .favoriteSlot, .continueInChat, .newItem,
++        case .commandDelete, .delete, .deleteAll, .pin, .numberSlot, .continueInChat, .newItem,
+             .settings, .copyCalculation:
+             false
+         }
+@@ -105,9 +108,9 @@ enum PaletteShortcut: Equatable {
+         switch self {
+         case .delete, .deleteAll, .copyFile, .copyName, .copyPath, .copyText, .copyCalculation,
+             .quickLook, .openInApp, .showDetails, .toggleFavorite, .hideFromSearch, .minimizeWindow,
+-            .newItem, .settings, .edit, .duplicate, .showInFinder:
++            .newItem, .settings, .edit, .duplicate, .showInFinder, .saveAsSnippet:
+             true
+-        case .commandDelete, .pasteFile, .quit, .forceQuit, .hideApp, .restart, .pin, .favoriteSlot,
++        case .commandDelete, .pasteFile, .quit, .forceQuit, .hideApp, .restart, .pin, .numberSlot,
+             .continueInChat:
+             false
+         }
+diff --git a/Tinycast/Palette/PaletteState.swift b/Tinycast/Palette/PaletteState.swift
+index 0a626fd2..78e85ba2 100644
+--- a/Tinycast/Palette/PaletteState.swift
++++ b/Tinycast/Palette/PaletteState.swift
+@@ -37,9 +37,6 @@ final class PaletteState {
+     private(set) var queryRewriteToken = UUID()
+     /// AppKit binds ⌘. to `cancelOperation:`, so the field editor eats it before `onKeyPress`.
+     private(set) var pinChordToken = UUID()
+-    /// Bumped when AppKit resolves ⌘1…⌘0 to a slot index from the physical number row.
+-    private(set) var favoriteSlotToken = UUID()
+-    private(set) var favoriteSlotIndex: Int?
+     /// Bumped for ⌘0 / ⌘+ / ⌘-, which the panel claims before the field editor can.
+     private(set) var emojiGridZoomToken = UUID()
+     private(set) var emojiGridZoom: EmojiGridZoom?
+@@ -52,7 +49,6 @@ final class PaletteState {
+     var pendingArgumentEntryID: String?
+     /// The row a shortcut opened root search onto, listed alone while the query is its name.
+     var argumentEntryID: String?
+-    /// True once ⌘ has been *held*, which numbers the favorite rows. The panel is the only writer.
+     private(set) var commandHeld = false
+     /// A chord is a tap, so the numbering waits out the tap before it claims the trailing labels.
+     @ObservationIgnored private var commandHoldTask: Task<Void, Never>?
+@@ -153,7 +149,7 @@ final class PaletteState {
+     }
+ 
+     /// Long enough that ⌘↵ or ⌘K never flashes the numbering, short enough to feel like a reveal.
+-    private static let commandHoldDelay = Duration.milliseconds(400)
++    private static let commandHoldDelay = Duration.milliseconds(100)
+ 
+     /// U+0001 can't appear in an entry id or an argument name, so the halves stay unambiguous.
+     nonisolated static func argumentKey(_ entryID: String, _ name: String) -> String {
+@@ -177,11 +173,6 @@ final class PaletteState {
+         restoredSelection = selection
+     }
+ 
+-    func noteFavoriteSlot(_ index: Int) {
+-        favoriteSlotIndex = index
+-        favoriteSlotToken = UUID()
+-    }
+-
+     func noteEmojiGridZoom(_ zoom: EmojiGridZoom) {
+         emojiGridZoom = zoom
+         emojiGridZoomToken = UUID()
+diff --git a/Tinycast/Palette/PaletteWindowController.swift b/Tinycast/Palette/PaletteWindowController.swift
+index 0e178a70..a071a068 100644
+--- a/Tinycast/Palette/PaletteWindowController.swift
++++ b/Tinycast/Palette/PaletteWindowController.swift
+@@ -441,13 +441,6 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
+                 self.core.palette.noteEmojiGridZoom(zoom)
+                 return true
+             }
+-            guard Self.commandCharacter(from: event) != nil else { return false }
+-            if self.core.palette.mode == .launcher || self.core.palette.mode == .clipboard,
+-                let index = FavoriteSlots.index(forKeyCode: event.keyCode)
+-            {
+-                self.core.palette.noteFavoriteSlot(index)
+-                return true
+-            }
+             guard let character = Self.commandCharacter(from: event) else { return false }
+             switch character {
+             case ",":
+diff --git a/Tinycast/Palette/RootPaletteView.swift b/Tinycast/Palette/RootPaletteView.swift
+index c4c972a2..70099e57 100644
+--- a/Tinycast/Palette/RootPaletteView.swift
++++ b/Tinycast/Palette/RootPaletteView.swift
+@@ -29,6 +29,7 @@ struct RootPaletteView: View {
+     @FocusState private var searchFocused: Bool
+     /// Kept apart from the search field's own focus. See docs/features/palette.md.
+     @FocusState private var argumentFocused: String?
++    @State private var numberArgumentFocus: NumberArgumentFocus?
+     /// Which in-window menu is open; at most one, so the state cannot disagree with itself.
+     @State private var openMenu: OpenMenu?
+     /// Sampled once by `openActions`, so the running-only rows can't appear while the menu is up.
+@@ -357,7 +358,7 @@ struct RootPaletteView: View {
+                 .background(
+                     WindowReader {
+                         hostWindow = $0
+-                        installHeaderArrowHandler(in: $0)
++                        installInputHandlers(in: $0)
+                     }
+                 )
+                 // The window's frame is the size source, so the glass and clip stay matched.
+@@ -505,9 +506,6 @@ struct RootPaletteView: View {
+                 // Next turn, past the refocus that selects all, so typing extends the answer.
+                 Task { @MainActor in (hostWindow as? PalettePanel)?.moveFieldEditorCaretToEnd() }
+             }
+-            .onChange(of: vm.favoriteSlotToken) {
+-                if let index = vm.favoriteSlotIndex { performShortcut(.favoriteSlot(index)) }
+-            }
+             // One optional makes "exactly one menu" structural; this only presents it.
+             .onChange(of: openMenu) {
+                 guard menuOpen else { return }
+@@ -519,6 +517,7 @@ struct RootPaletteView: View {
+             .onDisappear {
+                 menuPanel.hide()
+                 (hostWindow as? PalettePanel)?.onHeaderFieldBoundaryArrow = nil
++                (hostWindow as? PalettePanel)?.onNumberSlot = nil
+             }
+             // The first show builds this view after `prepare`, so no handler saw that reset.
+             .onAppear {
+@@ -654,10 +653,42 @@ struct RootPaletteView: View {
+                 }
+                 return .handled
+             }
++            // tinycast-space: typing a user alias exactly and pressing Space opens its entry, the
++            // way Raycast does. A row with inline arguments gets its first field focused; anything
++            // else runs, so further typing lands in the command's own search field. Apps and
++            // settings panes keep searching, since "tg something" is more often a query.
++            .onKeyPress(.space, phases: .down) { press in
++                guard vm.mode == .launcher, searchFocused, argumentFocused == nil, !menuOpen,
++                    !vm.isComposing, !vm.isControlListOpen, !isCollapsed,
++                    press.modifiers.subtracting(.capsLock).isEmpty,
++                    !vm.query.isEmpty, searchCaretAtEnd
++                else { return .ignored }
++                // "\ " escapes the Space: the backslash becomes a plain space and the query searches on.
++                if vm.query.hasSuffix("\\") {
++                    vm.query.removeLast()
++                    vm.query += " "
++                    return .handled
++                }
++                return openAliasEntry() ? .handled : .ignored
++            }
+             .onKeyPress(keys: [.tab], phases: .down) { press in
++                if press.modifiers.subtracting(.capsLock) == .option {
++                    guard !vm.isControlListOpen, !isCollapsed, quickAIOptionTabAvailable else {
++                        return .ignored
++                    }
++                    core.quickAICoordinator.ask(vm.query)
++                    return .handled
++                }
+                 // ⇥ inside an open list belongs to the list, not to the form's field order.
+                 if vm.isControlListOpen || menuOpen { return .handled }
+                 if vm.isComposing { return .ignored }
++                // tinycast-space: Tab on an exact alias does what Space does.
++                if vm.mode == .launcher, searchFocused, argumentFocused == nil, !isCollapsed,
++                    press.modifiers.subtracting(.capsLock).isEmpty,
++                    !vm.query.isEmpty, searchCaretAtEnd, openAliasEntry()
++                {
++                    return .handled
++                }
+                 advanceTabFocus(backwards: press.modifiers.contains(.shift))
+                 return .handled
+             }
+@@ -751,6 +782,25 @@ struct RootPaletteView: View {
+                 Task { @MainActor in focusPendingArgument() }
+             }
+             .onChange(of: argumentFocused) { _, field in vm.noteEditingField(field != nil) }
++            .task(id: numberArgumentFocus) {
++                guard let request = numberArgumentFocus else { return }
++                await Task.yield()
++                defer {
++                    if numberArgumentFocus == request { numberArgumentFocus = nil }
++                }
++                guard !Task.isCancelled, vm.mode == .launcher, vm.isVisible, !isCollapsed,
++                    vm.selection == request.selection, vm.query == request.query,
++                    vm.resetToken == request.resetToken, !menuOpen, !vm.isControlListOpen,
++                    !vm.isComposing,
++                    let launcher = screen as? LauncherScreen,
++                    launcher.rows.indices.contains(request.selection),
++                    launcher.rows[request.selection].id == request.rowID,
++                    let field = launcher.headerAccessory(
++                        at: request.selection, focus: $argumentFocused)?.firstIncompleteField
++                else { return }
++                argumentFocused = field
++                searchFocused = false
++            }
+             .onChange(of: quickAI.pendingAttachments.map(\.id)) { refreshAttachmentsMenu() }
+     }
+ 
+@@ -815,7 +865,7 @@ struct RootPaletteView: View {
+                 // Given room last: at the default priority it would split it with the field.
+                 Spacer(minLength: 0).layoutPriority(-1)
+             }
+-            if tabOpensChat {
++            if quickAIOptionTabAvailable {
+                 headerGutter(width: metrics.spacing.md)
+                 quickAITabHint
+             }
+@@ -897,26 +947,23 @@ struct RootPaletteView: View {
+         return screen.headerAccessory(at: selection(in: screen), focus: $argumentFocused)
+     }
+ 
+-    /// Nothing else advertises Tab, so the launcher says where it goes.
++    /// Nothing else advertises Option-Tab, so the launcher says where it goes.
+     private var quickAITabHint: some View {
+-        BarButton(chrome: .rounded, action: cycleMode) {
++        BarButton(chrome: .rounded, action: { core.quickAICoordinator.ask(vm.query) }) {
+             HStack(spacing: metrics.spacing.sm) {
+                 Text("Quick AI")
+                     .font(metrics.typography.bar)
+                     .foregroundStyle(Theme.Colors.textSecondary)
+-                KeyCapChip(text: "⇥", style: .outline)
++                KeyCapChip(text: "⌥⇥", style: .outline)
+                     .accessibilityHidden(true)
+             }
+         }
+-        .help("Press Tab to ask Quick AI")
++        .help("Press Option-Tab to ask Quick AI")
+     }
+ 
+-    /// Resolved through `PaletteTabAction`, so the hint cannot promise the wrong destination.
+-    private var tabOpensChat: Bool {
+-        guard !isCollapsed, headerAccessory?.fieldNames.isEmpty ?? true else { return false }
+-        return PaletteTabAction.resolve(
+-            mode: vm.mode, aiEnabled: settings.aiEnabled,
+-            clipboardEnabled: settings.clipboardEnabled) == .ask
++    private var quickAIOptionTabAvailable: Bool {
++        !isCollapsed && vm.mode == .launcher && settings.aiEnabled
++            && (headerAccessory?.fieldNames.isEmpty ?? true)
+     }
+ 
+     private var hidesSearchField: Bool { !isCollapsed && screen.hidesSearchField }
+@@ -1467,7 +1514,36 @@ struct RootPaletteView: View {
+         content.activate(index)
+     }
+ 
+-    /// For the chords the panel hands over as tokens, which work while a menu is open.
++    private func activateNumberSlot(_ index: Int) {
++        guard !menuOpen, !vm.isControlListOpen, !vm.isComposing else { return }
++        guard vm.mode == .launcher, !isCollapsed else {
++            performShortcut(.numberSlot(index))
++            return
++        }
++        guard let screen = screen as? LauncherScreen,
++            let selection = screen.numberSlots.selection(at: index, rowCount: screen.rows.count)
++        else { return }
++        let previous = vm.selection
++        numberArgumentFocus = nil
++        returnFocusToSearchField()
++        vm.selection = selection
++        scroll = ScrollIntent(kind: .follow)
++        if let field = screen.headerAccessory(
++            at: selection, focus: $argumentFocused)?.firstIncompleteField
++        {
++            if previous != selection {
++                numberArgumentFocus = NumberArgumentFocus(
++                    selection: selection, rowID: screen.rows[selection].id,
++                    query: vm.query, resetToken: vm.resetToken)
++            } else {
++                argumentFocused = field
++                searchFocused = false
++            }
++            return
++        }
++        screen.activate(at: selection)
++    }
++
+     private func performShortcut(_ shortcut: PaletteShortcut) {
+         let screen = screen
+         _ = screen.perform(shortcut, at: selection(in: screen))
+@@ -1484,10 +1560,66 @@ struct RootPaletteView: View {
+             vm.resetNavigation()
+         case .carryQuery(let mode): vm.pushCarryingQuery(mode: mode)
+         case .freshScreen(let mode): vm.push(mode: mode)
+-        case .ask: core.quickAICoordinator.ask(vm.query)
+         }
+     }
+ 
++    /// tinycast-space: the exact-alias jump shared by Space and Tab. False when the query is not
++    /// exactly a user alias of an entry that opens.
++    private func openAliasEntry() -> Bool {
++        // Case-sensitive on purpose: "cc" opens its command, "CC" (Shift) just searches.
++        guard let key = core.aliases.aliases.first(where: { $0.value == vm.query })?.key,
++            let launcher = screen as? LauncherScreen,
++            let index = launcher.rows.firstIndex(where: {
++                if case .entry(let app) = $0 { return app.preferenceKey == key }
++                return false
++            }),
++            case .entry(let app) = launcher.rows[index],
++            app.kind != .application, app.kind != .systemSettings
++        else { return false }
++        vm.selection = index
++        scroll = ScrollIntent(kind: .follow)
++        // Asked of the row itself, not of the header: its fields are built a pass later, so
++        // reading the accessory here would miss them and open the row instead.
++        let wantsArguments: Bool
++        // A view command whose arguments are all optional opens instead, so what follows lands
++        // in its own search bar — Search Homebrew's query is just its first search.
++        var opensInside = false
++        switch app.kind {
++        case .quicklink:
++            wantsArguments = core.quicklinks.quicklink(entryID: app.id).map {
++                !SnippetTemplateEngine.declaredArguments(in: $0.link).isEmpty
++            } ?? false
++        case .customCommand:
++            wantsArguments = !(core.customCommands.command(entryID: app.id)?.arguments ?? []).isEmpty
++        case .extensionCommand:
++            let command = extensions.resolve(app)?.1
++            let arguments = command?.arguments ?? []
++            opensInside = command?.mode == .view && !arguments.contains(where: \.required)
++            wantsArguments = !arguments.isEmpty && !opensInside
++        default:
++            wantsArguments = false
++        }
++        if wantsArguments {
++            // The palette focuses the first unanswered field as soon as the fields exist.
++            vm.pendingArgumentEntryID = app.id
++        } else if !opensInside, let field = headerAccessory?.fieldNames.first {
++            argumentFocused = field
++            searchFocused = false
++        } else {
++            launcher.activate(at: index)
++        }
++        return true
++    }
++
++    /// Only when typing would have appended — never from a caret in the middle of the query or
++    /// over a selection. All fields edit through one editor.
++    private var searchCaretAtEnd: Bool {
++        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor
++        else { return true }
++        let range = editor.selectedRange()
++        return range.length == 0 && range.location == (editor.string as NSString).length
++    }
++
+     private func advanceTabFocus(backwards: Bool) {
+         let screen = screen
+         if screen.tab(at: selection(in: screen), backwards: backwards) { return }
+@@ -1505,9 +1637,9 @@ struct RootPaletteView: View {
+         searchFocused = next == nil
+     }
+ 
+-    /// Right at an inline field's end and Left at its start continue the same ring as Tab.
+-    private func installHeaderArrowHandler(in window: NSWindow?) {
++    private func installInputHandlers(in window: NSWindow?) {
+         guard let panel = window as? PalettePanel else { return }
++        panel.onNumberSlot = { index in activateNumberSlot(index) }
+         panel.onHeaderFieldBoundaryArrow = { boundary in
+             if isCollapsed {
+                 return moveCompactSelection(boundary == .leading ? -1 : 1)
+@@ -1536,7 +1668,8 @@ struct RootPaletteView: View {
+     /// The palette was opened to fill one row's fields, so the caret starts in the first empty one.
+     private func focusPendingArgument() {
+         guard vm.pendingArgumentEntryID != nil,
+-            let field = headerAccessory?.firstIncompleteField
++            // tinycast-space: alias + Space lands in an optional field too, as Raycast does.
++            let field = headerAccessory?.firstIncompleteField ?? headerAccessory?.fieldNames.first
+         else { return }
+         argumentFocused = field
+         searchFocused = false
+@@ -1602,6 +1735,13 @@ struct RootPaletteView: View {
+ 
+ }
+ 
++private struct NumberArgumentFocus: Equatable {
++    let selection: Int
++    let rowID: String
++    let query: String
++    let resetToken: UUID
++}
++
+ /// The palette's in-window menus. One optional of these is the whole "only one is open" invariant.
+ private enum OpenMenu: Equatable {
+     case actions
+diff --git a/docs/features/clipboard.md b/docs/features/clipboard.md
+index ae7a5e77..06118529 100644
+--- a/docs/features/clipboard.md
++++ b/docs/features/clipboard.md
+@@ -10,7 +10,7 @@
+   `ClipboardDefaultAction.action(for:on:)` is the only place that says which chord runs what.**
+   Paste owns ↵, Copy ⌘↵ and Paste as Plain Text ⌃⌘↵; `clipboardDefaultAction` moves one to ↵ and
+   Paste takes the chord it left, so a Copy default keeps the ↵/⌘↵ swap it always had.
+-  `ClipboardCoordinator.activate(_:chord:)` runs it, and ⌘1…⌘0 on a pin and a double-click go
++  `ClipboardCoordinator.activate(_:chord:)` runs it, and ⌘1…⌘0 on a visible row and a double-click go
+   through the same call, so no surface can drift from the setting; ⌥↵ pastes regardless, since
+   keeping the window open is a paste-only idea. The ⌘K menu lists the three in chord order, which
+   puts the default first with the ↵ chip.
+@@ -420,9 +420,9 @@ Paste and Keep Window Open (⌥↵) does not promote any entry. The rows hold st
+ selection, so ↓ then ⌥↵ pastes a run of entries in order. `Paster.write` therefore only writes the
+ pasteboard; `paste` and `copy` promote after it, and `pasteInPlace` does not.
+ 
+-The ten palette slots shared with launcher favorites address this visible Pinned block too. A slot
+-uses the current query and type filter, so its first entry is the first visible pin; a missing slot is
+-a no-op. They are fixed to the physical number row, with ⌘1…⌘9 then ⌘0 as their labels.
++The ten palette slots shared with launcher favorites address the first ten visible rows, pins
++leading. A slot uses the current query and type filter, so its first entry is the first visible row;
++a missing slot is a no-op. They are fixed to the physical number row, with ⌘1…⌘9 then ⌘0 as their labels.
+ 
+ `load` reads every pinned row plus the newest 1000 unpinned ones as two indexed branches over a
+ partial index on `pinned_at` (`Tests/ClipboardTests.swift` covers the shape). The single
+diff --git a/docs/features/file-search.md b/docs/features/file-search.md
+index c632458a..76b1a9e5 100644
+--- a/docs/features/file-search.md
++++ b/docs/features/file-search.md
+@@ -314,6 +314,10 @@ the screen's own row actions: ↵ opens, ⌘↵ reveals, the copy, paste and tra
+ `FileSearchActionsMenu.perform`, and a row drags out as a copy. Row icons come from the same transient
+ fitted cache, purged when the palette hides.
+ 
++The root launcher's numbered shortcuts pass a digit to `FileSearchRow`. Holding ⌘ replaces its
++File/Folder label with that chord inside the existing selection and hover background; the dedicated
++Search Files screen passes no digit and retains its usual label.
++
+ ## Invocation
+ 
+ Settings ▸ File Search owns the `fileSearchEnabled` switch, which is off when its preference is absent,
+diff --git a/docs/features/launcher.md b/docs/features/launcher.md
+index cd0f031d..2fd52e32 100644
+--- a/docs/features/launcher.md
++++ b/docs/features/launcher.md
+@@ -103,7 +103,6 @@ refreshes collapse into a single trailing scan.
+ | alternate titles | the bundle's names in the user's other languages and English, a renamed bundle's file name, `CFBundleAlternateNames`, a snippet's keyword | the query as typed        | yes                                |
+ | subtitle         | an extension's title, or a row's own subtitle in its place                                                                                | the query read into Latin | yes                                |
+ | keywords         | the declared Info.plist name, an extension command's `keywords`, a meeting's calendar, and the title and subtitle joined both ways        | the query read into Latin | no: they only make an entry appear |
+-
+ An entry appears when the user's alias is an exact or prefix hit, or when any field passes the
+ sensitivity; an alias that is neither counts as one more alternate title. Bundle identifiers and
+ executable names are not matched.
+@@ -119,8 +118,7 @@ executable names are not matched.
+ | Matched character                                         | Points |
+ | --------------------------------------------------------- | -----: |
+ | the query's first, on the text's first                    |      4 |
+-| on a word start (just after a separator)                  |      3 |
+-| anywhere else, a separator on the same separator included |      2 |
++| on a word start (just after a separator)                  |      3 || anywhere else, a separator on the same separator included |      2 |
+ | a separator on a different one, like a space on `-`       |      1 |
+ | not adjacent to the previous match                        |     −1 |
+ 
+@@ -245,7 +243,6 @@ routes per script and keeps one space between words, which is what lets both `wx
+ | Japanese        | the kana only; ICU would read the kanji as Mandarin         | `メモ帳` → `memo`       |
+ | Cyrillic        | an explicit BGN table; ICU is scientific, and users are not | `Телеграм` → `telegram` |
+ | everything else | ICU `.toLatin`                                              | `Ελληνικά` → `ellenika` |
+-
+ It fires only when transliteration actually changes the letters: `Adobe — Creative Cloud` and
+ `Café Noir` are Latin already. **Kanji readings are not solved, only routed**: a Japanese app whose
+ name is pure kanji gets a Mandarin reading, which is why the English localization is indexed too.
+@@ -292,8 +289,8 @@ agenda order. Those sections follow publication order, so visible rows and flat
+ downstream. The result limit bounds ordinary matches, while whole categories remain uncapped, as they
+ are for an empty query.
+ 
+-Category queries show headers without pinning favorites or handing out their ⌘-digit slots. Opening
+-a row records its visit; the query is learned only when it did not match that row's category, so
++Category queries show headers without pinning favorites; ⌘-digit slots follow the displayed rows.
++Opening a row records its visit; the query is learned only when it did not match that row's category, so
+ category browsing cannot teach every window command the same search term.
+ 
+ ### Contextual commands
+@@ -420,8 +417,7 @@ alternate titles, read from the **raw** `infoDictionary`: `object(forInfoDiction
+ carries and the untranslated `ALTERNATE_NAME_1` placeholders several ship.
+ 
+ **A row is labelled the way Finder labels it: the localized name if the bundle ships one, and
+-otherwise the file name.** `CFBundleDisplayName` is deliberately _not_ the label: LaunchServices
+-ignores one that disagrees with the file name, so an app cannot present itself under a name its
++otherwise the file name.** `CFBundleDisplayName` is deliberately _not_ the label: LaunchServicesignores one that disagrees with the file name, so an app cannot present itself under a name its
+ folder does not carry, and neither should a launcher row. Visual Studio Code is the case that shows
+ it: `Code.app` would be labelled `Code`, but the folder, Finder, the Dock and the user all say
+ `Visual Studio Code`. Over the 83 bundles in the default scopes this rule matches
+@@ -745,27 +741,32 @@ favorites and keeps its selection when one is toggled.
+ 
+ ### ⌘-digit slots
+ 
+-`FavoriteSlots` (`Launcher/Model/FavoriteSlots.swift`) defines ten local palette slots: **⌘1…⌘9 then
+-⌘0**. They match the physical number row, not the character produced by the current keyboard layout,
+-so the same positions work on QWERTY and AZERTY. The same slots address pinned Clipboard entries in
+-that screen; the eleventh favorite is still listed and reorderable, and simply has no slot.
+-
+-Both palette sizes serve the chords from the same prefix, because `paletteIsCollapsed` already
+-requires an empty query: **compact implies empty implies `pinnedFavorites` is the visible section**. That
+-is why `LauncherScreen.pinnedFavorites` feeds the chords and the numbered rows alike, rather than
+-the compact bar re-deriving an empty-query order of its own. The compact bar draws no favorites, yet
+-every slot still launches one.
+-
+-Holding ⌘ swaps each numbered row's kind label for its chord. `PalettePanel` publishes the modifier
+-into `PaletteState.commandHeld` from `.flagsChanged` and clears it in `resignKey`, not in `prepare`,
+-which a re-show that preserves state skips entirely. The flag flips **400 ms after** the press, not
+-on it: every ⌘ chord in the palette starts as a ⌘ press, so revealing on the down edge flashed the
+-numbering under ⌘↵ and ⌘K. `noteCommandHeld` schedules the reveal and any release cancels it, so a
+-chord's own tap never outlives its keystroke while a deliberate hold still lights every row. **`AppRow` observes that flag itself**: reading
+-it any higher would attach it to `RootPaletteView`'s body and rebuild the whole palette on every ⌘
+-press, where a row-level read re-runs only the handful of rows the `LazyVStack` has realized. The
+-digit each row shows is carried on its `Row` case from the section build, so no row searches for its
+-own position.
++`NumberSlots` (`Launcher/Model/NumberSlots.swift`) defines ten local palette slots: **⌘1…⌘9 then
++⌘0**. They match the physical number row, so the same positions work on QWERTY and AZERTY.
++
++In the expanded launcher, the slots activate the first ten numbered rows in displayed order.
++A leading calculator or color card counts; section headers and the timed meeting card do not.
++The meeting card never takes a favorite's chord when its join window starts. Favorites, meeting
++entries, suggestions, search results, files and fallbacks follow in their displayed order. A missing
++slot does nothing. A calculator error remains non-actionable, just as with Return. `NumberSlots`
++maps flat rows to digits and back for both the rendered hints and activation.
++
++`RootPaletteView` selects the requested row and uses the same activation path as Return. Required
++arguments receive focus instead of launching incomplete input. Query text and filled arguments flow
++through the existing screen action. Composition and open menus suppress numbered activation.
++When the shortcut selects a different row, focus waits for its argument fields to mount. The
++view-owned task checks cancellation, row identity, query and palette reset before moving the caret.
++
++Compact mode retains favorite-only slots: `LauncherScreen.pinnedFavorites` feeds them the same way it
++used to feed the old favorites strip, so ⌘1…⌘0 still launch favorites even though the compact bar
++draws configured commands rather than favorite icons. Clipboard slots address its first ten visible
++rows. Other screens retain their own shortcuts.
++
++Holding ⌘ for 100 ms replaces app and file kind labels with their chords; calculator and color
++cards show a trailing overlay without changing their layout. The delay prevents a flash under ⌘↵
++and ⌘K. Releasing ⌘ or resigning key clears it. The row and hint views observe
++`PaletteState.commandHeld` locally, so revealing hints does not rebuild the whole palette. Slot
++digits are computed from section offsets, never by searching each row's ID.
+ 
+ ## Hiding one result
+ 
+diff --git a/docs/features/palette.md b/docs/features/palette.md
+index b053d0f4..059287dc 100644
+--- a/docs/features/palette.md
++++ b/docs/features/palette.md
+@@ -172,18 +172,15 @@ pops, a root one closes), so `backHelp` says which, rather than promising a step
+ a close. It lights to `textPrimary` under the pointer over `Theme.Duration.hover`, and
+ `HeaderBackButton` keeps that hover state to itself so the header around it never re-renders.
+ 
+-The launcher advertises the first hop in the header: `Quick AI` beside a ⇥ key cap.
+-It is drawn only when Tab really would open Quick AI, a condition read
+-back out of `PaletteTabAction` rather than restated, so a hint can never promise a destination the
+-key does not go to: an argument field to walk takes Tab first, and the hint steps aside for it.
++The launcher advertises Quick AI in the header beside a ⌥⇥ key cap. Option-Tab opens Quick AI
++when AI is enabled; Tab continues to move through the launcher and clipboard ring. An argument
++field to walk takes Tab first, and Option-Tab's hint steps aside while one is focused.
+ 
+ `PaletteTabAction` decides where Tab goes _and_ what happens to the typed text. The clipboard hands
+-the query over, since one search narrows either list. **From the launcher, Tab `.ask`s**: Quick AI opens
+-fresh with the typed text already sent, so one key turns a search into a question. Leaving chat is
++the query over, since one search narrows either list. **From the launcher, Option-Tab asks**: Quick AI opens
++fresh with the typed text already sent, so one chord turns a search into a question. Leaving chat is
+ still a `.freshScreen`: that field holds a half-written message rather than a query, and a draft
+-dropped into a filter matches nothing. `.ask` is its own case rather than a `carryQuery(.ai)` because
+-the text is submitted, not seeded, and the hint reads the case back out (`== .ask`) instead of
+-restating the rule.
++dropped into a filter matches nothing.
+ 
+ **A ring hop is a step, so Escape walks back out the way Tab came in**: launcher → chat → clipboard
+ takes two presses to unwind, and the back chevron's tooltip stops promising a step it cannot take.
+@@ -608,10 +605,13 @@ handled in `PalettePanel.sendEvent` before `super` hands the event to the respon
+ 
+ - **A bare backspace**: the field editor consumes it as an edit (`onBareBackspace`).
+ - **Chords with no main menu item**: ⌘, and ⌘w, which an app with a menu bar would never see here.
+-- **The physical number-row slots.** `FavoriteSlots` matches ⌘1…⌘0 by key code before fixed command
+-  chords, then publishes the resolved position to the active screen. Only the launcher and clipboard
+-  screens intercept these slots; other screens keep their own ⌘-number shortcuts. The compact bar
+-  shows no favorites, but its slots still launch them.
++- **The physical number-row slots.** `NumberSlots` matches ⌘1…⌘0 by key code before fixed command
++  chords, then synchronously hands the resolved position to the mounted palette view. Only launcher
++  and clipboard screens intercept these slots; other screens keep their own ⌘-number shortcuts.
++  Expanded launcher slots activate the first ten numbered rows, excluding the timed meeting card,
++  through the screen's primary action, including required-argument focus. Compact launcher slots
++  still address favorites: the compact bar shows no favorites, but its slots still launch them.
++  Composition and open menus suppress numbered activation.
+ - **Chords AppKit has already bound to a selector.** `⌘.` is the one that bites: AppKit binds it to
+   `cancelOperation:` alongside Escape, so `interpretKeyEvents` hands it to the field editor and
+   `onKeyPress(keys: ["."])` never fires. Pin (⌘.) therefore arrives through `onCommandShortcut`,
+diff --git a/docs/testing.md b/docs/testing.md
+index 73076fb3..ec66f09c 100644
+--- a/docs/testing.md
++++ b/docs/testing.md
+@@ -272,6 +272,18 @@ search result that navigates and then sits there.
+ Last, `Scripts/check-migrations.sh` fails once a stable release has shipped a migration, which is the
+ cue to delete it. See [migrations.md](migrations.md).
+ 
++### Numbered launcher results
++
++- Search for multiple apps or commands and use ⌘1–⌘9 / ⌘0: each activates the corresponding row.
++  Hold ⌘ to check the hints. Headers take no number; a calculator or color card takes the first.
++  A timed meeting card has no number and never displaces the favorite chords as its join window starts.
++- Check file and fallback rows, a missing slot, and a non-actionable calculator error.
++- A numbered command with missing required arguments selects the row and focuses its first empty
++  field, including when a different row was selected. Type to verify the new field owns focus, then
++  activate again. Escape returns to search; arrows still navigate normally.
++- Compose IME marked text or open an actions/argument menu: numbered shortcuts must not launch a row.
++- Compact favorites and Clipboard pins retain their shortcuts; extension screens retain their keys.
++
+ ## Performance measurement
+ 
+ `Platform/Signposts.swift` emits eight intervals on the `com.tinycast.perf` subsystem: `AppCore.start`,
