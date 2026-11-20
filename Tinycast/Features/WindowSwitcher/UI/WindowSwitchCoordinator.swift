@@ -10,6 +10,7 @@ final class WindowSwitchCoordinator {
     private unowned let core: AppCore
     /// Armed by a repeat press with its modifiers held: letting go switches, as ⌘Tab does.
     private var releaseMonitor: Any?
+    private var remoteTask: Task<Void, Never>?
     private static let chordModifiers: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
 
     init(
@@ -28,6 +29,8 @@ final class WindowSwitchCoordinator {
         appIndex.setCommandsVisible(
             [.switchWindows, .switchWindowsBackwards], settings.navigationEnabled)
         guard !settings.navigationEnabled else { return }
+        remoteTask?.cancel()
+        remoteTask = nil
         session.reset()
         if palette.mode == .switchWindows { palette.prepare(mode: .launcher) }
     }
@@ -83,7 +86,19 @@ final class WindowSwitchCoordinator {
     /// Every open sweeps anew, a restore included: hiding dropped the last snapshot.
     func load() {
         guard hasAccessibility() else { return }
-        session.present(WindowSwitchSweep.snapshot(ranks: WindowZOrder.appRanks()))
+        remoteTask?.cancel()
+        let snapshot = WindowSwitchSweep.snapshot(
+            ranks: WindowZOrder.appRanks(),
+            sourcePID: paletteCoordinator.targetApp?.processIdentifier)
+        let applications = snapshot.applications
+        let knownWindowIDs = Set(snapshot.entries.map(\.windowID))
+        let revision = session.present(snapshot)
+        remoteTask = Task {
+            let remote = await WindowSwitchSweep.remoteSnapshot(
+                applications: applications, excluding: knownWindowIDs)
+            guard !Task.isCancelled else { return }
+            _ = session.merge(remote, revision: revision)
+        }
     }
 
     func activate(_ entry: WindowSwitchEntry) {
@@ -104,7 +119,7 @@ final class WindowSwitchCoordinator {
         guard !entry.isMinimized, hasAccessibility(), let element = liveElement(for: entry),
             !AXWindowAccess.isFullScreen(element.window), AXWindowAccess.minimize(element.window)
         else { return }
-        session.markMinimized(entry.handle)
+        session.markMinimized(entry.windowID)
     }
 
     func hideApplication(_ entry: WindowSwitchEntry) {
@@ -122,7 +137,7 @@ final class WindowSwitchCoordinator {
     }
 
     private func liveElement(for entry: WindowSwitchEntry) -> WindowSwitchSweep.Element? {
-        guard let element = session.element(for: entry.handle), !element.app.isTerminated
+        guard let element = session.element(for: entry.windowID), !element.app.isTerminated
         else { return nil }
         return element
     }

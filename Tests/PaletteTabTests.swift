@@ -1,6 +1,6 @@
 import Foundation
 
-/// The three surfaces stay reachable one way, and chat is skipped when off.
+/// Quick AI has its own chord; Tab rings the launcher and clipboard.
 @main
 @MainActor
 struct PaletteTabTests {
@@ -19,8 +19,8 @@ struct PaletteTabTests {
     static func main() {
         expect(
             PaletteTabAction.resolve(mode: .launcher, aiEnabled: true, clipboardEnabled: true),
-            .ask,
-            "the launcher hands the typed text to chat as the question, not as a draft")
+            .carryQuery(.clipboard),
+            "Tab leaves the launcher for the clipboard while Quick AI uses Option-Tab")
         expect(
             PaletteTabAction.resolve(mode: .ai, aiEnabled: true, clipboardEnabled: true),
             .freshScreen(.clipboard),
@@ -68,18 +68,16 @@ struct PaletteTabTests {
             .carryQuery(.launcher),
             "turned off, the clipboard is skipped and chat returns to the launcher")
 
-        // Three presses from the launcher have to land back on it, or the ring is a dead end.
+        // Tab rings the launcher and clipboard without entering Quick AI.
         var mode = PaletteMode.launcher
         var visited: [PaletteMode] = []
-        for _ in 0..<3 {
+        for _ in 0..<2 {
             switch PaletteTabAction.resolve(mode: mode, aiEnabled: true, clipboardEnabled: true) {
             case .carryQuery(let next), .freshScreen(let next): mode = next
-            // Asking opens chat, so the ring still steps onto it.
-            case .ask: mode = .ai
             }
             visited.append(mode)
         }
-        if visited == [.ai, .clipboard, .launcher] {
+        if visited == [.clipboard, .launcher] {
             passes += 1
         } else {
             failures += 1
@@ -93,7 +91,6 @@ struct PaletteTabTests {
                 mode: offMode, aiEnabled: false, clipboardEnabled: true)
             {
             case .carryQuery(let next), .freshScreen(let next): offMode = next
-            case .ask: offMode = .ai
             }
             offVisited.append(offMode)
         }

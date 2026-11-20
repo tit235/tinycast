@@ -16,8 +16,11 @@ struct WindowSwitchList: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(entries) { entry in
-                        WindowSwitchRow(entry: entry, selected: entry.id == selectedID)
+                    ForEach(entries.indices, id: \.self) { index in
+                        let entry = entries[index]
+                        WindowSwitchRow(
+                            entry: entry, selected: entry.id == selectedID,
+                            slot: NumberSlots.digit(at: index))
                             .selectionFrame(entry.id == selectedID)
                             .contentShape(Rectangle())
                             .onTapGesture { onActivate(entry) }
@@ -38,9 +41,11 @@ struct WindowSwitchList: View {
 
 private struct WindowSwitchRow: View {
 
+    @Environment(PaletteState.self) private var palette
     @Environment(\.metrics) private var metrics
     let entry: WindowSwitchEntry
     let selected: Bool
+    let slot: Character?
     @State private var hovered = false
 
     private var fill: Color {
@@ -70,10 +75,17 @@ private struct WindowSwitchRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: metrics.spacing.md)
-            Text(trailing)
-                .font(metrics.typography.rowTrailing)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            if let slot, palette.commandHeld {
+                HStack(spacing: metrics.spacing.xxs) {
+                    KeyCapChip(text: "⌘", style: .outline)
+                    KeyCapChip(text: String(slot), style: .outline)
+                }
+            } else {
+                Text(trailing)
+                    .font(metrics.typography.rowTrailing)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
         .padding(.horizontal, metrics.spacing.md)
         .padding(.vertical, metrics.spacing.sm)

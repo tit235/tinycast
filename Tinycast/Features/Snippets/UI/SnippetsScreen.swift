@@ -105,6 +105,12 @@ enum SnippetActionsMenu {
                 item(defaultAction, shortcut: "↵", record: record, core: core),
                 item(defaultAction.alternate, shortcut: "⌘↵", record: record, core: core),
                 PopoverMenuItem(
+                    title: String(localized: "Copy to Clipboard"), systemImage: "doc.on.doc",
+                    shortcut: "⌘↵"
+                ) {
+                    core.snippetCoordinator.copySnippetFromPalette(id: record.id)
+                },
+                PopoverMenuItem(
                     title: String(localized: "Edit Snippet"), systemImage: "pencil", startsSection: true,
                     shortcut: "⌘E"
                 ) {

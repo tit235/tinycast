@@ -127,11 +127,12 @@ struct ExtensionDeepLink: Sendable, Equatable {
                 launchContext: launchContext))
     }
 
+    /// `launchContext` is any JSON object; anything else means no context.
     nonisolated static func parseContext(_ raw: String) -> [String: RenderValue] {
         guard let data = raw.data(using: .utf8),
-            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return [:] }
-        return object.mapValues(RenderValue.init(json:))
+        return json.mapValues(RenderValue.init(json:))
     }
 
     /// Raycast sends one URL-encoded JSON object; anything else means no arguments, not a failure.

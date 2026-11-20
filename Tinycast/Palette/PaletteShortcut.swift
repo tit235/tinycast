@@ -46,6 +46,8 @@ enum PaletteShortcut: Equatable {
     case edit
     /// ⌘D.
     case duplicate
+    /// ⌘S, a clipboard entry's text kept as a snippet.
+    case saveAsSnippet
     /// ⌘F, for a screen whose ⌘↵ already does something else.
     case showInFinder
     /// ⌥⌘,, the screen's own settings; ⌘, alone stays the app's.
@@ -55,7 +57,7 @@ enum PaletteShortcut: Equatable {
     /// ⌘., which AppKit binds to `cancelOperation:`, so it arrives as a token instead of a key.
     case pin
     /// ⌘1…⌘0, matched by key code in the panel and handed over as a slot.
-    case favoriteSlot(Int)
+    case numberSlot(Int)
 
     /// `matches` compares through the active layout, so the letters stay positional.
     static func resolve(
@@ -83,6 +85,7 @@ enum PaletteShortcut: Equatable {
         if command, !shift, matches("n") { return .newItem }
         if command, !shift, !option, !control, matches("e") { return .edit }
         if command, !shift, matches("d") { return .duplicate }
+        if command, !shift, !option, !control, matches("s") { return .saveAsSnippet }
         if command, option, matches(",") { return .settings }
         if command, matches("j") { return .continueInChat }
         return nil
@@ -93,9 +96,9 @@ enum PaletteShortcut: Equatable {
         switch self {
         case .copyFile, .copyName, .copyPath, .copyText, .pasteFile, .quickLook, .openInApp,
             .showDetails, .toggleFavorite, .hideFromSearch, .quit, .forceQuit, .minimizeWindow,
-            .hideApp, .restart, .edit, .duplicate, .showInFinder:
+            .hideApp, .restart, .edit, .duplicate, .showInFinder, .saveAsSnippet:
             true
-        case .commandDelete, .delete, .deleteAll, .pin, .favoriteSlot, .continueInChat, .newItem,
+        case .commandDelete, .delete, .deleteAll, .pin, .numberSlot, .continueInChat, .newItem,
             .settings, .copyCalculation:
             false
         }
@@ -105,9 +108,9 @@ enum PaletteShortcut: Equatable {
         switch self {
         case .delete, .deleteAll, .copyFile, .copyName, .copyPath, .copyText, .copyCalculation,
             .quickLook, .openInApp, .showDetails, .toggleFavorite, .hideFromSearch, .minimizeWindow,
-            .newItem, .settings, .edit, .duplicate, .showInFinder:
+            .newItem, .settings, .edit, .duplicate, .showInFinder, .saveAsSnippet:
             true
-        case .commandDelete, .pasteFile, .quit, .forceQuit, .hideApp, .restart, .pin, .favoriteSlot,
+        case .commandDelete, .pasteFile, .quit, .forceQuit, .hideApp, .restart, .pin, .numberSlot,
             .continueInChat:
             false
         }

@@ -135,7 +135,7 @@ run ScopesTests            $L/SearchScopes.swift
 run AppNameTests           Tinycast/Platform/AppDisplayName.swift \
                            Tinycast/Platform/BundleLocalization.swift \
                            $L/SearchRelevance.swift
-run FavoritesTests         $L/FavoriteSlots.swift
+run FavoritesTests         $L/NumberSlots.swift
 run AppInstallationTests   $L/SearchRelevance.swift $L/ScriptRomanization.swift \
                            $L/LauncherMatch.swift $L/EntryNaming.swift $L/LauncherOrder.swift \
                            $L/LauncherRankingStore.swift $L/LauncherSuggestions.swift $L/SearchScopes.swift \
@@ -293,7 +293,7 @@ run PaletteMenuClickTests  Tinycast/Platform/Appearance.swift \
                            Tinycast/DesignSystem/Interaction/Motion.swift \
                            Tinycast/DesignSystem/Interaction/AnimatedPanel.swift \
                            Tinycast/Palette/PalettePanel.swift \
-                           Tinycast/DesignSystem/IconTint.swift
+                           Tinycast/DesignSystem/IconTint.swift $L/NumberSlots.swift
 run FormInputTests         Tinycast/Platform/Appearance.swift \
                            Tinycast/DesignSystem/Theme.swift \
                            Tinycast/DesignSystem/InterfaceMetrics.swift \

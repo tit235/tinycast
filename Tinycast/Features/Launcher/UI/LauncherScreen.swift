@@ -34,6 +34,11 @@ struct LauncherScreen: PaletteScreen {
     /// Resolved in `init`: the palette indexes this several times per event, so it can't recompute.
     let rows: [Row]
 
+    var numberSlots: NumberSlots {
+        if case .meeting = rows.first { return NumberSlots(hasMeetingCard: true) }
+        return NumberSlots(hasMeetingCard: false)
+    }
+
     init(
         appIndex: AppIndex, favorites: FavoritesStore, visibility: VisibilityStore,
         currencyRates: CurrencyRateStore, core: AppCore, vm: PaletteState, running: Bool,
@@ -332,7 +337,7 @@ struct LauncherScreen: PaletteScreen {
         case .edit: return editItem(at: selection)
         case .copyPath: return copyQuicklink(at: selection)
         case .copyFile: return copyDeepLink(at: selection)
-        case .favoriteSlot(let index): return launchFavorite(at: index)
+        case .numberSlot(let index): return launchFavorite(at: index)
         case .copyCalculation: return copyCalculation(at: selection)
         case .openInApp, .showDetails:
             guard let meeting = meeting(at: selection) else { return false }
@@ -411,7 +416,6 @@ struct LauncherScreen: PaletteScreen {
         return true
     }
 
-    /// ⌘1–⌘9/⌘0 — launch a favorite by position, in either palette size.
     private func launchFavorite(at index: Int) -> Bool {
         guard pinnedFavorites.indices.contains(index) else { return false }
         activate(at: index + (leadCard == nil ? 0 : 1))

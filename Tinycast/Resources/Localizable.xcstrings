@@ -106760,6 +106760,18 @@
         }
       }
     },
+    "Save as Snippet" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Als Textbaustein speichern" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Guardar como fragmento" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Enregistrer comme extrait" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "スニペットとして保存" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "스니펫으로 저장" } },
+        "pt" : { "stringUnit" : { "state" : "translated", "value" : "Salvar como trecho" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сохранить как сниппет" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "另存为文本片段" } }
+      }
+    },
     "Save a project's windows as a room, then walk into it with one shortcut." : {
       "localizations" : {
         "de" : {

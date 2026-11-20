@@ -172,18 +172,15 @@ pops, a root one closes), so `backHelp` says which, rather than promising a step
 a close. It lights to `textPrimary` under the pointer over `Theme.Duration.hover`, and
 `HeaderBackButton` keeps that hover state to itself so the header around it never re-renders.
 
-The launcher advertises the first hop in the header: `Quick AI` beside a ⇥ key cap.
-It is drawn only when Tab really would open Quick AI, a condition read
-back out of `PaletteTabAction` rather than restated, so a hint can never promise a destination the
-key does not go to: an argument field to walk takes Tab first, and the hint steps aside for it.
+The launcher advertises Quick AI in the header beside a ⌥⇥ key cap. Option-Tab opens Quick AI
+when AI is enabled; Tab continues to move through the launcher and clipboard ring. An argument
+field to walk takes Tab first, and Option-Tab's hint steps aside while one is focused.
 
 `PaletteTabAction` decides where Tab goes _and_ what happens to the typed text. The clipboard hands
-the query over, since one search narrows either list. **From the launcher, Tab `.ask`s**: Quick AI opens
-fresh with the typed text already sent, so one key turns a search into a question. Leaving chat is
+the query over, since one search narrows either list. **From the launcher, Option-Tab asks**: Quick AI opens
+fresh with the typed text already sent, so one chord turns a search into a question. Leaving chat is
 still a `.freshScreen`: that field holds a half-written message rather than a query, and a draft
-dropped into a filter matches nothing. `.ask` is its own case rather than a `carryQuery(.ai)` because
-the text is submitted, not seeded, and the hint reads the case back out (`== .ask`) instead of
-restating the rule.
+dropped into a filter matches nothing.
 
 **A ring hop is a step, so Escape walks back out the way Tab came in**: launcher → chat → clipboard
 takes two presses to unwind, and the back chevron's tooltip stops promising a step it cannot take.
@@ -608,10 +605,13 @@ handled in `PalettePanel.sendEvent` before `super` hands the event to the respon
 
 - **A bare backspace**: the field editor consumes it as an edit (`onBareBackspace`).
 - **Chords with no main menu item**: ⌘, and ⌘w, which an app with a menu bar would never see here.
-- **The physical number-row slots.** `FavoriteSlots` matches ⌘1…⌘0 by key code before fixed command
-  chords, then publishes the resolved position to the active screen. Only the launcher and clipboard
-  screens intercept these slots; other screens keep their own ⌘-number shortcuts. The compact bar
-  shows no favorites, but its slots still launch them.
+- **The physical number-row slots.** `NumberSlots` matches ⌘1…⌘0 by key code before fixed command
+  chords, then synchronously hands the resolved position to the mounted palette view. Only launcher
+  and clipboard screens intercept these slots; other screens keep their own ⌘-number shortcuts.
+  Expanded launcher slots activate the first ten numbered rows, excluding the timed meeting card,
+  through the screen's primary action, including required-argument focus. Compact launcher slots
+  still address favorites: the compact bar shows no favorites, but its slots still launch them.
+  Composition and open menus suppress numbered activation.
 - **Chords AppKit has already bound to a selector.** `⌘.` is the one that bites: AppKit binds it to
   `cancelOperation:` alongside Escape, so `interpretKeyEvents` hands it to the field editor and
   `onKeyPress(keys: ["."])` never fires. Pin (⌘.) therefore arrives through `onCommandShortcut`,

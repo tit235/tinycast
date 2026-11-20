@@ -6,8 +6,8 @@ builds that chat's route through `AIProviderFactory` to stream an `AIRequest`.
 Chat is the first consumer and [Quick Actions](quick-actions.md) the second; the provider layer
 depends on neither, and Quick Actions carries its own route rather than borrowing this one.
 
-Chat has two surfaces over one history, as Raycast's does. **Quick AI** is the palette screen: Tab
-from the launcher asks what you typed, and the answer appears in place. **AI Chat** is a window:
+Chat has two surfaces over one history, as Raycast's does. **Quick AI** is the palette screen:
+Option-Tab from the launcher asks what you typed, and the answer appears in place. **AI Chat** is a window:
 saved conversations in a sidebar on the left, the open one on the right, and a composer at the
 bottom with the model picker. ⌘J hands a Quick AI conversation to the window.
 

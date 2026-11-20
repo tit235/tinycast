@@ -225,6 +225,13 @@ final class AppCore {
     func showProgress(_ text: String) {}
     func applyClipboardTextSearch() {}
     func confirm(title: String, message: String, symbol: String, confirmTitle: String) async -> Bool { false }
+    let snippetCoordinator = SnippetCoordinatorStub()
+}
+
+@MainActor
+final class SnippetCoordinatorStub {
+    var prefilledText: String?
+    func editSnippet(_ record: Any?, prefilledText: String? = nil) { self.prefilledText = prefilledText }
 }
 
 enum DialogTone { case neutral, danger }

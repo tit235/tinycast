@@ -127,9 +127,9 @@ final class SnippetCoordinator {
         paletteCoordinator.togglePalette(mode: .snippets, seeding: query.isEmpty ? nil : query)
     }
 
-    func editSnippet(_ record: StoredSnippet?) {
+    func editSnippet(_ record: StoredSnippet?, prefilledText: String? = nil) {
         guard settings.snippetsEnabled else { return }
-        editor = SnippetEditorSession(record: record)
+        editor = SnippetEditorSession(record: record, prefilledText: prefilledText)
         paletteCoordinator.showPalette(mode: .snippetEditor)
     }
 

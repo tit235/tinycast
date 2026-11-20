@@ -35,6 +35,7 @@ struct ExtensionSignInTests {
         await browserCompletion()
         await cancellationBeforeStart()
         await cancellationDuringSignIn()
+        await retryAfterCancellation()
         print("\(passes) passed, \(failures) failed")
         if failures > 0 { exit(1) }
     }
@@ -130,5 +131,38 @@ struct ExtensionSignInTests {
         browser?.completion(nil, ASWebAuthenticationSessionError(.canceledLogin))
         await Task.yield()
         expect(exited, "late browser callbacks do not resume the caller again")
+    }
+
+    /// A stale callback from the cancelled attempt's browser must never resolve the retry it left
+    /// running — only the browser the retry itself opened can finish it.
+    static func retryAfterCancellation() async {
+        var browser: BrowserSession?
+        let signIn = ExtensionSignInSession { _, _, completion in
+            let session = BrowserSession(completion: completion)
+            browser = session
+            return session
+        }
+        let task = Task { try await signIn.run(url: url, callbackScheme: "raycast") }
+        while browser == nil { await Task.yield() }
+        let abandoned = browser
+        task.cancel()
+        _ = try? await task.value
+
+        browser = nil
+        let retry = Task { try await signIn.run(url: url, callbackScheme: "raycast") }
+        while browser == nil { await Task.yield() }
+        let retryBrowser = browser
+        let stale = URL(string: "raycast://oauth?code=stale")!
+        abandoned?.completion(stale, nil)
+        await Task.yield()
+        retryBrowser?.completion(redirect, nil)
+        do {
+            let result = try await retry.value
+            expect(
+                result == redirect,
+                "the abandoned browser's stale callback must not resolve the retry")
+        } catch {
+            expect(false, "the abandoned browser's callback must not fail the retry")
+        }
     }
 }

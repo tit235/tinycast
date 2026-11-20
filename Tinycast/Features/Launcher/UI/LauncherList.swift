@@ -70,7 +70,8 @@ struct LauncherList: View {
         /// Its own case, because only this header carries a gear.
         case fallbackHeader(String)
         case card(LeadCard)
-        case app(AppEntry)
+        /// `slot` is the row's ⌘-digit, carried from the section build rather than searched.
+        case app(AppEntry, slot: Character?)
         case favorite(FavoritesStore.Item, index: Int)
         case file(FileSearchResult, index: Int)
         case fallback(AppEntry, index: Int)
@@ -79,12 +80,19 @@ struct LauncherList: View {
             case .header(let title): return "header-" + title
             case .fallbackHeader: return "fallback-header"
             case .card(let card): return card.rowID
-            case .app(let app): return app.id
+            case .app(let app, _): return app.id
             case .favorite(let favorite, _): return favorite.id
             case .file(let result, _): return "file-" + result.id
             case .fallback(let app, _): return "fallback-" + app.id
             }
         }
+    }
+
+    private var cardOffset: Int { card == nil ? 0 : 1 }
+
+    private var numberSlots: NumberSlots {
+        if case .meeting = card { return NumberSlots(hasMeetingCard: true) }
+        return NumberSlots(hasMeetingCard: false)
     }
 
     private var firstRowSelected: Bool {
@@ -124,15 +132,21 @@ struct LauncherList: View {
         }
         if !meetings.isEmpty {
             rows.append(.header(AppEntry.Kind.meeting.descriptor.sectionTitle.resolved()))
-            rows.append(contentsOf: meetings.map { .app($0) })
+            rows.append(contentsOf: meetings.enumerated().map {
+                .app($1, slot: numberSlots.digit(forRow: cardOffset + favorites.count + $0))
+            })
         }
         if !suggestions.isEmpty {
             rows.append(.header(String(localized: "Suggestions")))
-            rows.append(contentsOf: suggestions.map { .app($0) })
+            rows.append(contentsOf: suggestions.enumerated().map {
+                .app($1, slot: numberSlots.digit(forRow: cardOffset + favorites.count + meetingCount + $0))
+            })
         }
         if !matches.isEmpty {
             rows.append(.header(String(localized: "Results")))
-            rows.append(contentsOf: matches.map { .app($0) })
+            rows.append(contentsOf: matches.enumerated().map {
+                .app($1, slot: numberSlots.digit(forRow: cardOffset + favorites.count + pinnedCount + $0))
+            })
         }
         // Publication order, so rows match the flat index.
         let kinds: [AppEntry.Kind] = [
@@ -140,10 +154,14 @@ struct LauncherList: View {
             .snippet, .systemAction, .windowLayout, .windowRoom, .windowCommand, .customCommand,
             .quickAction, .command
         ]
+        var offset = cardOffset + favorites.count + pinnedCount + matchCount
         for kind in kinds {
             guard let group = grouped[kind], !group.isEmpty else { continue }
             rows.append(.header(kind.descriptor.sectionTitle.resolved()))
-            rows.append(contentsOf: group.map { .app($0) })
+            rows.append(contentsOf: group.enumerated().map {
+                .app($1, slot: numberSlots.digit(forRow: offset + $0))
+            })
+            offset += group.count
         }
         // A missing kind would make every later row activate its neighbour: assert instead.
         assert(
@@ -173,17 +191,21 @@ struct LauncherList: View {
                                         configureHelp: String(localized: "Configure Fallbacks…"))
                                 case .card(let card):
                                     LeadCardView(card: card, selected: cardSelected)
+                                        .overlay(alignment: .topTrailing) {
+                                            LauncherNumberHint(digit: numberSlots.digit(forRow: 0))
+                                                .padding(.top, metrics.spacing.xs)
+                                        }
                                         .contentShape(Rectangle())
                                         .onTapGesture(perform: onActivateCard)
                                         .onRightClick(perform: onCardActions)
                                         .padding(.bottom, metrics.spacing.xs)
                                         .selectionFrame(cardSelected)
-                                case .app(let app):
+                                case .app(let app, let slot):
                                     AppRow(
                                         app: app,
                                         selected: app.id == selectedRowID,
                                         running: runningApps.isRunning(app),
-                                        slot: nil
+                                        slot: slot
                                     )
                                     .contentShape(Rectangle())
                                     .onRowTap(drag: drag(for: app)) { onActivate(app) }
@@ -198,8 +220,9 @@ struct LauncherList: View {
                                 case .file(let result, let index):
                                     FileSearchRow(
                                         result: result, selected: row.id == selectedRowID,
-                                        showsLocation: true
-                                    )
+                                        showsLocation: true,
+                                        numberSlot: numberSlots.digit(
+                                            forRow: cardOffset + favorites.count + results.count + index))
                                     .contentShape(Rectangle())
                                     .onRowTap(drag: result.rowDrag(dropped: onDropped)) {
                                         files?.onActivate(index)
@@ -209,7 +232,9 @@ struct LauncherList: View {
                                 case .fallback(let app, let index):
                                     AppRow(
                                         app: app, selected: row.id == selectedRowID, running: false,
-                                        slot: nil
+                                        slot: numberSlots.digit(
+                                            forRow: cardOffset + favorites.count + results.count
+                                                + (files?.results.count ?? 0) + index)
                                     )
                                     .contentShape(Rectangle())
                                     .onTapGesture { fallbacks?.onActivate(index) }
@@ -236,7 +261,7 @@ struct LauncherList: View {
 
     @ViewBuilder
     private func favoriteRow(_ favorite: FavoritesStore.Item, index: Int) -> some View {
-        let slot = FavoriteSlots.digit(at: index)
+        let slot = numberSlots.digit(forRow: cardOffset + index)
         switch favorite {
         case .entry(let entry):
             AppRow(
@@ -245,7 +270,7 @@ struct LauncherList: View {
         case .file(let file):
             FileSearchRow(
                 result: file, selected: favorite.id == selectedRowID,
-                showsLocation: true, slot: slot)
+                showsLocation: true, numberSlot: slot)
         }
     }
 
@@ -379,5 +404,21 @@ private struct AppRow: View {
                 .fill(fill)
         )
         .armedHover($hovered)
+    }
+}
+
+private struct LauncherNumberHint: View {
+    let digit: Character?
+    @Environment(PaletteState.self) private var palette
+    @Environment(\.metrics) private var metrics
+
+    var body: some View {
+        if let digit, palette.commandHeld {
+            HStack(spacing: metrics.spacing.xxs) {
+                KeyCapChip(text: "⌘", style: .outline)
+                KeyCapChip(text: String(digit), style: .outline)
+            }
+            .padding(.trailing, metrics.spacing.md)
+        }
     }
 }

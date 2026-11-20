@@ -16,7 +16,6 @@ struct ClipboardTests {
         editHonoursTheCaptureLimit()
         pinsSurvivePruningAndTheWindow()
         pinsLeadFilteredSearches()
-        pinnedSlotResolutionUsesVisiblePins()
         landingSkipsThePins()
         textFormClassification()
         colorParsing()
@@ -279,44 +278,6 @@ struct ClipboardTests {
             expect(
                 short.first?.text == "needle in the haystack",
                 "the pinned match leads the fallback search too")
-        }
-    }
-
-    /// Slot picks are taken from the visible pinned block after query/filter, not from all pins.
-    static func pinnedSlotResolutionUsesVisiblePins() {
-        withStore { store, _ in
-            store.addText("alpha one", sourceBundleID: nil)
-            store.addText("beta two", sourceBundleID: nil)
-            store.addText("beta three", sourceBundleID: nil)
-            store.addText("plain text", sourceBundleID: nil)
-
-            store.togglePinned(item(store, "alpha one"))
-            store.togglePinned(item(store, "beta two"))
-            store.togglePinned(item(store, "beta three"))
-
-            expect(
-                store.pinnedItem(at: 0, in: "", filter: .all)?.text == "alpha one",
-                "slot 1 maps to the first pinned row")
-            expect(
-                store.pinnedItem(at: 2, in: "", filter: .all)?.text == "beta three",
-                "slot 3 maps to the third pinned row")
-            expect(
-                store.pinnedItem(at: 3, in: "", filter: .all) == nil,
-                "missing pinned slot returns nil")
-
-            expect(
-                store.pinnedItem(at: 0, in: "beta", filter: .all)?.text == "beta two",
-                "query narrows the pinned block before slot mapping")
-            expect(
-                store.pinnedItem(at: 1, in: "beta", filter: .all)?.text == "beta three",
-                "slot mapping follows visible pinned order under query")
-            expect(
-                store.pinnedItem(at: 2, in: "beta", filter: .all) == nil,
-                "query can remove pinned slots from reach")
-
-            expect(
-                store.pinnedItem(at: 0, in: "", filter: .link) == nil,
-                "filter applies before pinned slot mapping")
         }
     }
 
@@ -616,6 +577,15 @@ struct ClipboardTests {
             expect(
                 texts(store, filter: .link) == ["https://apple.com", "second.link.dev"],
                 "a pinned link leads its filtered block")
+
+            store.addFiles(
+                ["/Users/me/Desktop/Shot.png", "/Users/me/Desktop/Report.pdf"], sourceBundleID: nil)
+            expect(
+                texts(store, filter: .image) == ["/Users/me/Desktop/Shot.png"],
+                "an image copied in Finder is an image")
+            expect(
+                texts(store, filter: .file) == ["/Users/me/Desktop/Report.pdf"],
+                "so Files Only leaves it out, and keeps a PDF")
         }
     }
 

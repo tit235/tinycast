@@ -29,6 +29,7 @@ struct RootPaletteView: View {
     @FocusState private var searchFocused: Bool
     /// Kept apart from the search field's own focus. See docs/features/palette.md.
     @FocusState private var argumentFocused: String?
+    @State private var numberArgumentFocus: NumberArgumentFocus?
     /// Which in-window menu is open; at most one, so the state cannot disagree with itself.
     @State private var openMenu: OpenMenu?
     /// Sampled once by `openActions`, so the running-only rows can't appear while the menu is up.
@@ -88,7 +89,7 @@ struct RootPaletteView: View {
             return MenuSearchScreen(
                 session: menuSearch, core: core, vm: vm, openActions: openActions)
         case .switchWindows:
-            return WindowSwitchScreen(session: windowSwitch, core: core)
+            return WindowSwitchScreen(session: windowSwitch, core: core, metrics: metrics)
         case .rooms:
             return RoomsScreen(coordinator: core.roomCoordinator, session: core.roomSession, vm: vm)
         case .roomWindows:
@@ -357,7 +358,7 @@ struct RootPaletteView: View {
                 .background(
                     WindowReader {
                         hostWindow = $0
-                        installHeaderArrowHandler(in: $0)
+                        installInputHandlers(in: $0)
                     }
                 )
                 // The window's frame is the size source, so the glass and clip stay matched.
@@ -505,9 +506,6 @@ struct RootPaletteView: View {
                 // Next turn, past the refocus that selects all, so typing extends the answer.
                 Task { @MainActor in (hostWindow as? PalettePanel)?.moveFieldEditorCaretToEnd() }
             }
-            .onChange(of: vm.favoriteSlotToken) {
-                if let index = vm.favoriteSlotIndex { performShortcut(.favoriteSlot(index)) }
-            }
             // One optional makes "exactly one menu" structural; this only presents it.
             .onChange(of: openMenu) {
                 guard menuOpen else { return }
@@ -519,6 +517,7 @@ struct RootPaletteView: View {
             .onDisappear {
                 menuPanel.hide()
                 (hostWindow as? PalettePanel)?.onHeaderFieldBoundaryArrow = nil
+                (hostWindow as? PalettePanel)?.onNumberSlot = nil
             }
             // The first show builds this view after `prepare`, so no handler saw that reset.
             .onAppear {
@@ -654,10 +653,42 @@ struct RootPaletteView: View {
                 }
                 return .handled
             }
+            // tinycast-space: typing a user alias exactly and pressing Space opens its entry, the
+            // way Raycast does. A row with inline arguments gets its first field focused; anything
+            // else runs, so further typing lands in the command's own search field. Apps and
+            // settings panes keep searching, since "tg something" is more often a query.
+            .onKeyPress(.space, phases: .down) { press in
+                guard vm.mode == .launcher, searchFocused, argumentFocused == nil, !menuOpen,
+                    !vm.isComposing, !vm.isControlListOpen, !isCollapsed,
+                    press.modifiers.subtracting(.capsLock).isEmpty,
+                    !vm.query.isEmpty, searchCaretAtEnd
+                else { return .ignored }
+                // "\ " escapes the Space: the backslash becomes a plain space and the query searches on.
+                if vm.query.hasSuffix("\\") {
+                    vm.query.removeLast()
+                    vm.query += " "
+                    return .handled
+                }
+                return openAliasEntry() ? .handled : .ignored
+            }
             .onKeyPress(keys: [.tab], phases: .down) { press in
+                if press.modifiers.subtracting(.capsLock) == .option {
+                    guard !vm.isControlListOpen, !isCollapsed, quickAIOptionTabAvailable else {
+                        return .ignored
+                    }
+                    core.quickAICoordinator.ask(vm.query)
+                    return .handled
+                }
                 // ⇥ inside an open list belongs to the list, not to the form's field order.
                 if vm.isControlListOpen || menuOpen { return .handled }
                 if vm.isComposing { return .ignored }
+                // tinycast-space: Tab on an exact alias does what Space does.
+                if vm.mode == .launcher, searchFocused, argumentFocused == nil, !isCollapsed,
+                    press.modifiers.subtracting(.capsLock).isEmpty,
+                    !vm.query.isEmpty, searchCaretAtEnd, openAliasEntry()
+                {
+                    return .handled
+                }
                 advanceTabFocus(backwards: press.modifiers.contains(.shift))
                 return .handled
             }
@@ -751,6 +782,25 @@ struct RootPaletteView: View {
                 Task { @MainActor in focusPendingArgument() }
             }
             .onChange(of: argumentFocused) { _, field in vm.noteEditingField(field != nil) }
+            .task(id: numberArgumentFocus) {
+                guard let request = numberArgumentFocus else { return }
+                await Task.yield()
+                defer {
+                    if numberArgumentFocus == request { numberArgumentFocus = nil }
+                }
+                guard !Task.isCancelled, vm.mode == .launcher, vm.isVisible, !isCollapsed,
+                    vm.selection == request.selection, vm.query == request.query,
+                    vm.resetToken == request.resetToken, !menuOpen, !vm.isControlListOpen,
+                    !vm.isComposing,
+                    let launcher = screen as? LauncherScreen,
+                    launcher.rows.indices.contains(request.selection),
+                    launcher.rows[request.selection].id == request.rowID,
+                    let field = launcher.headerAccessory(
+                        at: request.selection, focus: $argumentFocused)?.firstIncompleteField
+                else { return }
+                argumentFocused = field
+                searchFocused = false
+            }
             .onChange(of: quickAI.pendingAttachments.map(\.id)) { refreshAttachmentsMenu() }
     }
 
@@ -815,7 +865,7 @@ struct RootPaletteView: View {
                 // Given room last: at the default priority it would split it with the field.
                 Spacer(minLength: 0).layoutPriority(-1)
             }
-            if tabOpensChat {
+            if quickAIOptionTabAvailable {
                 headerGutter(width: metrics.spacing.md)
                 quickAITabHint
             }
@@ -897,26 +947,23 @@ struct RootPaletteView: View {
         return screen.headerAccessory(at: selection(in: screen), focus: $argumentFocused)
     }
 
-    /// Nothing else advertises Tab, so the launcher says where it goes.
+    /// Nothing else advertises Option-Tab, so the launcher says where it goes.
     private var quickAITabHint: some View {
-        BarButton(chrome: .rounded, action: cycleMode) {
+        BarButton(chrome: .rounded, action: { core.quickAICoordinator.ask(vm.query) }) {
             HStack(spacing: metrics.spacing.sm) {
                 Text("Quick AI")
                     .font(metrics.typography.bar)
                     .foregroundStyle(Theme.Colors.textSecondary)
-                KeyCapChip(text: "⇥", style: .outline)
+                KeyCapChip(text: "⌥⇥", style: .outline)
                     .accessibilityHidden(true)
             }
         }
-        .help("Press Tab to ask Quick AI")
+        .help("Press Option-Tab to ask Quick AI")
     }
 
-    /// Resolved through `PaletteTabAction`, so the hint cannot promise the wrong destination.
-    private var tabOpensChat: Bool {
-        guard !isCollapsed, headerAccessory?.fieldNames.isEmpty ?? true else { return false }
-        return PaletteTabAction.resolve(
-            mode: vm.mode, aiEnabled: settings.aiEnabled,
-            clipboardEnabled: settings.clipboardEnabled) == .ask
+    private var quickAIOptionTabAvailable: Bool {
+        !isCollapsed && vm.mode == .launcher && settings.aiEnabled
+            && (headerAccessory?.fieldNames.isEmpty ?? true)
     }
 
     private var hidesSearchField: Bool { !isCollapsed && screen.hidesSearchField }
@@ -1467,7 +1514,36 @@ struct RootPaletteView: View {
         content.activate(index)
     }
 
-    /// For the chords the panel hands over as tokens, which work while a menu is open.
+    private func activateNumberSlot(_ index: Int) {
+        guard !menuOpen, !vm.isControlListOpen, !vm.isComposing else { return }
+        guard vm.mode == .launcher, !isCollapsed else {
+            performShortcut(.numberSlot(index))
+            return
+        }
+        guard let screen = screen as? LauncherScreen,
+            let selection = screen.numberSlots.selection(at: index, rowCount: screen.rows.count)
+        else { return }
+        let previous = vm.selection
+        numberArgumentFocus = nil
+        returnFocusToSearchField()
+        vm.selection = selection
+        scroll = ScrollIntent(kind: .follow)
+        if let field = screen.headerAccessory(
+            at: selection, focus: $argumentFocused)?.firstIncompleteField
+        {
+            if previous != selection {
+                numberArgumentFocus = NumberArgumentFocus(
+                    selection: selection, rowID: screen.rows[selection].id,
+                    query: vm.query, resetToken: vm.resetToken)
+            } else {
+                argumentFocused = field
+                searchFocused = false
+            }
+            return
+        }
+        screen.activate(at: selection)
+    }
+
     private func performShortcut(_ shortcut: PaletteShortcut) {
         let screen = screen
         _ = screen.perform(shortcut, at: selection(in: screen))
@@ -1484,8 +1560,64 @@ struct RootPaletteView: View {
             vm.resetNavigation()
         case .carryQuery(let mode): vm.pushCarryingQuery(mode: mode)
         case .freshScreen(let mode): vm.push(mode: mode)
-        case .ask: core.quickAICoordinator.ask(vm.query)
         }
+    }
+
+    /// tinycast-space: the exact-alias jump shared by Space and Tab. False when the query is not
+    /// exactly a user alias of an entry that opens.
+    private func openAliasEntry() -> Bool {
+        // Case-sensitive on purpose: "cc" opens its command, "CC" (Shift) just searches.
+        guard let key = core.aliases.aliases.first(where: { $0.value == vm.query })?.key,
+            let launcher = screen as? LauncherScreen,
+            let index = launcher.rows.firstIndex(where: {
+                if case .entry(let app) = $0 { return app.preferenceKey == key }
+                return false
+            }),
+            case .entry(let app) = launcher.rows[index],
+            app.kind != .application, app.kind != .systemSettings
+        else { return false }
+        vm.selection = index
+        scroll = ScrollIntent(kind: .follow)
+        // Asked of the row itself, not of the header: its fields are built a pass later, so
+        // reading the accessory here would miss them and open the row instead.
+        let wantsArguments: Bool
+        // A view command whose arguments are all optional opens instead, so what follows lands
+        // in its own search bar — Search Homebrew's query is just its first search.
+        var opensInside = false
+        switch app.kind {
+        case .quicklink:
+            wantsArguments = core.quicklinks.quicklink(entryID: app.id).map {
+                !SnippetTemplateEngine.declaredArguments(in: $0.link).isEmpty
+            } ?? false
+        case .customCommand:
+            wantsArguments = !(core.customCommands.command(entryID: app.id)?.arguments ?? []).isEmpty
+        case .extensionCommand:
+            let command = extensions.resolve(app)?.1
+            let arguments = command?.arguments ?? []
+            opensInside = command?.mode == .view && !arguments.contains(where: \.required)
+            wantsArguments = !arguments.isEmpty && !opensInside
+        default:
+            wantsArguments = false
+        }
+        if wantsArguments {
+            // The palette focuses the first unanswered field as soon as the fields exist.
+            vm.pendingArgumentEntryID = app.id
+        } else if !opensInside, let field = headerAccessory?.fieldNames.first {
+            argumentFocused = field
+            searchFocused = false
+        } else {
+            launcher.activate(at: index)
+        }
+        return true
+    }
+
+    /// Only when typing would have appended — never from a caret in the middle of the query or
+    /// over a selection. All fields edit through one editor.
+    private var searchCaretAtEnd: Bool {
+        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor
+        else { return true }
+        let range = editor.selectedRange()
+        return range.length == 0 && range.location == (editor.string as NSString).length
     }
 
     private func advanceTabFocus(backwards: Bool) {
@@ -1505,9 +1637,9 @@ struct RootPaletteView: View {
         searchFocused = next == nil
     }
 
-    /// Right at an inline field's end and Left at its start continue the same ring as Tab.
-    private func installHeaderArrowHandler(in window: NSWindow?) {
+    private func installInputHandlers(in window: NSWindow?) {
         guard let panel = window as? PalettePanel else { return }
+        panel.onNumberSlot = { index in activateNumberSlot(index) }
         panel.onHeaderFieldBoundaryArrow = { boundary in
             if isCollapsed {
                 return moveCompactSelection(boundary == .leading ? -1 : 1)
@@ -1536,7 +1668,8 @@ struct RootPaletteView: View {
     /// The palette was opened to fill one row's fields, so the caret starts in the first empty one.
     private func focusPendingArgument() {
         guard vm.pendingArgumentEntryID != nil,
-            let field = headerAccessory?.firstIncompleteField
+            // tinycast-space: alias + Space lands in an optional field too, as Raycast does.
+            let field = headerAccessory?.firstIncompleteField ?? headerAccessory?.fieldNames.first
         else { return }
         argumentFocused = field
         searchFocused = false
@@ -1600,6 +1733,13 @@ struct RootPaletteView: View {
         screen.activate(at: selection(in: screen))
     }
 
+}
+
+private struct NumberArgumentFocus: Equatable {
+    let selection: Int
+    let rowID: String
+    let query: String
+    let resetToken: UUID
 }
 
 /// The palette's in-window menus. One optional of these is the whole "only one is open" invariant.

@@ -30,7 +30,9 @@ final class MenuPanel: NSPanel, AnimatedPanel {
         case .keyDown, .scrollWheel:
             paletteState?.disarmHoverHighlight(pointerAt: NSEvent.mouseLocation)
         case .flagsChanged:
-            paletteState?.noteCommandHeld(event.modifierFlags.contains(.command))
+            paletteState?.noteCommandHeld(
+                event.modifierFlags.contains(.command)
+                    && event.modifierFlags.isDisjoint(with: [.shift, .option, .control, .function]))
         default: break
         }
         if event.type == .keyDown, onKeyDown?(event) == true {

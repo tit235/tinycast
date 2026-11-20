@@ -3,6 +3,7 @@ import SwiftUI
 struct WindowSwitchScreen: PaletteScreen {
     let session: WindowSwitchSession
     let core: AppCore
+    let metrics: InterfaceMetrics
 
     var rows: [WindowSwitchEntry] { session.filtered }
 
@@ -56,7 +57,30 @@ struct WindowSwitchScreen: PaletteScreen {
 
     func secondary(at selection: Int) -> Bool { false }
 
+    func headerAccessory(
+        at selection: Int, focus: FocusState<String?>.Binding
+    ) -> PaletteHeaderAccessory? {
+        PaletteHeaderAccessory(
+            width: metrics.spacing.md + metrics.size.rowIcon,
+            fieldNames: [], firstIncompleteField: nil,
+            placement: .besideSearchField,
+            view: AnyView(
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: metrics.spacing.md)
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: metrics.size.rowIcon, height: metrics.size.rowIcon)
+                        .opacity(session.isDiscovering ? 1 : 0)
+                        .accessibilityHidden(!session.isDiscovering)
+                }))
+    }
+
     func perform(_ shortcut: PaletteShortcut, at selection: Int) -> Bool {
+        if case .numberSlot(let index) = shortcut {
+            guard rows.indices.contains(index) else { return false }
+            core.windowSwitchCoordinator.activate(rows[index])
+            return true
+        }
         guard let entry = entry(at: selection) else { return false }
         let coordinator = core.windowSwitchCoordinator
         switch shortcut {
