@@ -1,0 +1,242 @@
+diff --git a/Scripts/benchmark-dictation.sh b/Scripts/benchmark-dictation.sh
+index 6c2640b6..6778ad90 100755
+--- a/Scripts/benchmark-dictation.sh
++++ b/Scripts/benchmark-dictation.sh
+@@ -7,7 +7,7 @@ if (( $# < 1 || $# > 4 )); then
+     exit 2
+ fi
+ helper=${2:-"$repo/build/DerivedData/Build/Products/Debug/Tinycast Dev.app/Contents/Helpers/Tinycast Dev Dictation.app"}
+-models=${3:-"$HOME/Library/Caches/com.abueammar.tinycast.dev/Dictation"}
++models=${3:-"$HOME/Library/Caches/com.tinycast.app.dev/Dictation"}
+ binary=$(mktemp /tmp/tinycast-dictation-benchmark.XXXXXX)
+ trap 'rm -f "$binary"' EXIT
+ swiftc -O -swift-version 6 -target "$(uname -m)-apple-macos26.0" \
+diff --git a/Tests/SettingsFileTests.swift b/Tests/SettingsFileTests.swift
+index 8a28db42..08f43605 100644
+--- a/Tests/SettingsFileTests.swift
++++ b/Tests/SettingsFileTests.swift
+@@ -375,8 +375,8 @@ struct SettingsFileTests {
+ 
+     private static func testPaths() {
+         let expected = [
+-            ("com.abueammar.tinycast", "tinycast"), ("com.abueammar.tinycast.dev", "tinycast-dev"),
+-            ("com.abueammar.tinycast.beta", "tinycast-beta"), ("org.example.cast", "org.example.cast")
++            ("com.tinycast.app", "tinycast"), ("com.tinycast.app.dev", "tinycast-dev"),
++            ("com.tinycast.app.beta", "tinycast-beta"), ("org.example.cast", "org.example.cast")
+         ]
+         for (bundleID, folder) in expected {
+             check(
+diff --git a/Tinycast/Features/AI/Model/ChatPresetStore.swift b/Tinycast/Features/AI/Model/ChatPresetStore.swift
+index 73802ecf..e0ed5fc3 100644
+--- a/Tinycast/Features/AI/Model/ChatPresetStore.swift
++++ b/Tinycast/Features/AI/Model/ChatPresetStore.swift
+@@ -14,7 +14,7 @@ final class ChatPresetStore {
+     }
+ 
+     private static var defaultDirectory: URL {
+-        let bundleID = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+         return FileManager.default
+             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+             .appendingPathComponent(bundleID, isDirectory: true)
+diff --git a/Tinycast/Features/Clipboard/Model/ClipboardStore.swift b/Tinycast/Features/Clipboard/Model/ClipboardStore.swift
+index be7354ef..a90a7f3d 100644
+--- a/Tinycast/Features/Clipboard/Model/ClipboardStore.swift
++++ b/Tinycast/Features/Clipboard/Model/ClipboardStore.swift
+@@ -320,7 +320,7 @@ final class ClipboardStore {
+ 
+     /// Application Support, not Caches: a history the OS may reclaim is not a history.
+     private static var defaultDirectory: URL {
+-        let bundleID = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+         return FileManager.default
+             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+             .appendingPathComponent(bundleID, isDirectory: true)
+diff --git a/Tinycast/Features/CloudSync/Service/CloudSyncAvailability.swift b/Tinycast/Features/CloudSync/Service/CloudSyncAvailability.swift
+index 5fbd2ad2..237f6828 100644
+--- a/Tinycast/Features/CloudSync/Service/CloudSyncAvailability.swift
++++ b/Tinycast/Features/CloudSync/Service/CloudSyncAvailability.swift
+@@ -9,7 +9,7 @@ enum CloudSyncAvailability {
+     }
+ 
+     static var container: CKContainer {
+-        CKContainer(identifier: "iCloud." + (Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"))
++        CKContainer(identifier: "iCloud." + (Bundle.main.bundleIdentifier ?? "com.tinycast.app"))
+     }
+ 
+     static func unavailability(of container: CKContainer) async -> CloudSyncUnavailability? {
+diff --git a/Tinycast/Features/Extensions/Service/ExtensionCatalog.swift b/Tinycast/Features/Extensions/Service/ExtensionCatalog.swift
+index 95e145eb..c4fb76ac 100644
+--- a/Tinycast/Features/Extensions/Service/ExtensionCatalog.swift
++++ b/Tinycast/Features/Extensions/Service/ExtensionCatalog.swift
+@@ -97,7 +97,7 @@ enum ExtensionCatalog {
+         let base =
+             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+             .first ?? FileManager.default.homeDirectoryForCurrentUser
+-        let bundleID = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+         return base.appendingPathComponent(bundleID, isDirectory: true)
+     }
+ 
+diff --git a/Tinycast/Features/Launcher/Model/LauncherRankingStore.swift b/Tinycast/Features/Launcher/Model/LauncherRankingStore.swift
+index 46f38578..e8005faf 100644
+--- a/Tinycast/Features/Launcher/Model/LauncherRankingStore.swift
++++ b/Tinycast/Features/Launcher/Model/LauncherRankingStore.swift
+@@ -156,7 +156,7 @@ final class LauncherRankingStore {
+ 
+     /// Application Support, not Caches: relearning a ranking takes the user weeks of use.
+     private static func defaultFileURL() -> URL {
+-        let bundleID = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+         let base = FileManager.default
+             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+             .appendingPathComponent(bundleID, isDirectory: true)
+diff --git a/Tinycast/Features/Launcher/Service/AppIndex.swift b/Tinycast/Features/Launcher/Service/AppIndex.swift
+index ebd98d12..62875e53 100644
+--- a/Tinycast/Features/Launcher/Service/AppIndex.swift
++++ b/Tinycast/Features/Launcher/Service/AppIndex.swift
+@@ -828,7 +828,7 @@ final class AppIndex {
+         }
+     }
+ 
+-    private static let ownBundlePrefix = "com.abueammar.tinycast"
++    private static let ownBundlePrefix = "com.tinycast.app"
+ 
+     private func signals(
+         for entry: AppEntry, usage: LauncherRankingStore.Snapshot
+diff --git a/Tinycast/Features/QuickActions/Model/CustomQuickActionStore.swift b/Tinycast/Features/QuickActions/Model/CustomQuickActionStore.swift
+index 474c3f07..975eaabb 100644
+--- a/Tinycast/Features/QuickActions/Model/CustomQuickActionStore.swift
++++ b/Tinycast/Features/QuickActions/Model/CustomQuickActionStore.swift
+@@ -17,7 +17,7 @@ final class CustomQuickActionStore {
+     }
+ 
+     private static var defaultDirectory: URL {
+-        let bundleID = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+         return FileManager.default
+             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+             .appendingPathComponent(bundleID, isDirectory: true)
+diff --git a/Tinycast/Features/Quicklinks/Model/QuicklinkStore.swift b/Tinycast/Features/Quicklinks/Model/QuicklinkStore.swift
+index 10ad2c52..16a444a1 100644
+--- a/Tinycast/Features/Quicklinks/Model/QuicklinkStore.swift
++++ b/Tinycast/Features/Quicklinks/Model/QuicklinkStore.swift
+@@ -46,7 +46,7 @@ final class QuicklinkStore {
+ 
+     /// Under Application Support, the same per-channel root snippets use.
+     private static var defaultDirectory: URL {
+-        let bundleID = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+         return FileManager.default
+             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+             .appendingPathComponent(bundleID, isDirectory: true)
+diff --git a/Tinycast/Features/Snippets/Model/SnippetRepository.swift b/Tinycast/Features/Snippets/Model/SnippetRepository.swift
+index 4874f79b..5fda0d6a 100644
+--- a/Tinycast/Features/Snippets/Model/SnippetRepository.swift
++++ b/Tinycast/Features/Snippets/Model/SnippetRepository.swift
+@@ -112,7 +112,7 @@ struct SnippetRepository: Sendable {
+     private let mutationHooks: MutationHooks
+ 
+     init(
+-        bundleIdentifier: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast",
++        bundleIdentifier: String = Bundle.main.bundleIdentifier ?? "com.tinycast.app",
+         applicationSupportRoot: URL = FileManager.default.urls(
+             for: .applicationSupportDirectory,
+             in: .userDomainMask
+diff --git a/Tinycast/Platform/AppPaths.swift b/Tinycast/Platform/AppPaths.swift
+index 36744897..a136b405 100644
+--- a/Tinycast/Platform/AppPaths.swift
++++ b/Tinycast/Platform/AppPaths.swift
+@@ -3,20 +3,20 @@ import Foundation
+ /// The per-channel storage roots. Keyed by bundle id so a Dev build never shares a stable's dirs.
+ enum AppPaths {
+     static func caches(
+-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        bundleID: String = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+     ) -> URL {
+         root(.cachesDirectory, bundleID: bundleID)
+     }
+ 
+     static func applicationSupport(
+-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        bundleID: String = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+     ) -> URL {
+         root(.applicationSupportDirectory, bundleID: bundleID)
+     }
+ 
+     /// `~/.config/tinycast/settings.json`; another channel suffixes the folder, as `tinycast-dev`.
+     static func settingsFile(
+-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        bundleID: String = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+     ) -> URL {
+         FileManager.default.homeDirectoryForCurrentUser
+             .appending(path: ".config", directoryHint: .isDirectory)
+@@ -27,7 +27,7 @@ enum AppPaths {
+     /// Snippets or Notes: the folder the user chose, else its home in Application Support.
+     static func contentFolder(
+         _ chosen: String?, named name: String,
+-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        bundleID: String = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+     ) -> URL {
+         guard let chosen, isFolderPath(chosen) else {
+             return applicationSupport(bundleID: bundleID).appending(path: name, directoryHint: .isDirectory)
+@@ -40,7 +40,7 @@ enum AppPaths {
+     /// How a chosen folder is stored: nil for the default, else `~`-relative where it can be.
+     static func contentFolderSetting(
+         for url: URL, named name: String,
+-        bundleID: String = Bundle.main.bundleIdentifier ?? "com.abueammar.tinycast"
++        bundleID: String = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+     ) -> String? {
+         let chosen = url.standardizedFileURL.resolvingSymlinksInPath()
+         let standard = contentFolder(nil, named: name, bundleID: bundleID).resolvingSymlinksInPath()
+@@ -54,7 +54,7 @@ enum AppPaths {
+     }
+ 
+     private static func configFolderName(bundleID: String) -> String {
+-        let stable = "com.abueammar.tinycast"
++        let stable = "com.tinycast.app"
+         if bundleID == stable { return "tinycast" }
+         guard bundleID.hasPrefix(stable + ".") else { return bundleID }
+         return "tinycast-" + bundleID.dropFirst(stable.count + 1)
+diff --git a/Tinycast/Platform/KeychainSecretStore.swift b/Tinycast/Platform/KeychainSecretStore.swift
+index 76c838a3..7ce3807c 100644
+--- a/Tinycast/Platform/KeychainSecretStore.swift
++++ b/Tinycast/Platform/KeychainSecretStore.swift
+@@ -16,7 +16,7 @@ struct KeychainSecretStore: Sendable {
+     static let installedAIEnvironment = KeychainSecretStore(scope: "installed-ai-environment")
+ 
+     init(scope: String, bundleIdentifier: String? = Bundle.main.bundleIdentifier) {
+-        service = "\(bundleIdentifier ?? "com.abueammar.tinycast").\(scope)"
++        service = "\(bundleIdentifier ?? "com.tinycast.app").\(scope)"
+     }
+ 
+     func secret(for account: UUID) throws -> String? {
+diff --git a/project.yml b/project.yml
+index 98cab7d2..ab2fd965 100644
+--- a/project.yml
++++ b/project.yml
+@@ -1,6 +1,6 @@
+ name: Tinycast
+ options:
+-  bundleIdPrefix: com.abueammar.tinycast
++  bundleIdPrefix: com.tinycast.app
+   deploymentTarget:
+     macOS: "26.0"
+   createIntermediateGroups: true
+@@ -17,14 +17,14 @@ settings:
+     # A stable self-signed identity keeps the Accessibility grant across rebuilds. docs/signing.md
+     CODE_SIGN_IDENTITY: "Tinycast Self-Signed"
+     SWIFT_STRICT_CONCURRENCY: complete
+-    TINYCAST_BUNDLE_IDENTIFIER: com.abueammar.tinycast
++    TINYCAST_BUNDLE_IDENTIFIER: com.tinycast.app
+     TINYCAST_URL_SCHEME: tinycast
+     # iCloud needs a profile, so only a build that names one swaps in TinycastCloud.entitlements.
+     TINYCAST_ENTITLEMENTS: Tinycast/Tinycast.entitlements
+     TINYCAST_PROVISIONING_PROFILE: ""
+   configs:
+     Debug:
+-      TINYCAST_BUNDLE_IDENTIFIER: com.abueammar.tinycast.dev
++      TINYCAST_BUNDLE_IDENTIFIER: com.tinycast.app.dev
+       TINYCAST_CLOUDKIT_ENVIRONMENT: Development
+       TINYCAST_APS_ENVIRONMENT: development
+       # Its own scheme too, so a link never lands in whichever channel macOS happens to pick.
