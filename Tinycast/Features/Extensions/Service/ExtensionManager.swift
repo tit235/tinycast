@@ -44,6 +44,7 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
     private let storeVersions = ExtensionVersionStore(fileURL: ExtensionCatalog.storeVersionsFile())
     @ObservationIgnored private let runtime: ExtensionRuntime
     @ObservationIgnored private let bridge: ExtensionHostBridge
+    @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private weak var appIndex: AppIndex?
     @ObservationIgnored private weak var coordinator: ExtensionCoordinator?
 
@@ -59,10 +60,11 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
     @ObservationIgnored private var nextToastID = 1
     @ObservationIgnored private var searchState = ExtensionSearchState()
 
-    init(clipboardStore: ClipboardStore) {
+    init(clipboardStore: ClipboardStore, settings: AppSettings) {
         storage = ExtensionStorage(directory: ExtensionCatalog.storageDirectory())
         bridge = ExtensionHostBridge(clipboardStore: clipboardStore)
         runtime = ExtensionRuntime(hostAPI: bridge)
+        self.settings = settings
         bridge.context = self
     }
 
@@ -97,6 +99,7 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
                 storage: storage,
                 commandMetadata: commandMetadata,
                 supportDirectory: ExtensionCatalog.supportRoot(),
+                additionalSearchPaths: { [weak self] in self?.settings.extensionCustomSearchPaths ?? [] },
                 makeExecution: { [weak self, weak coordinator] owner, command, type in
                     guard let self, let coordinator else { return nil }
                     let host = ExtensionMenuBarHost(
@@ -444,7 +447,9 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
 
         do {
             // No-op while a context is already up; after `stop()` this builds a fresh one.
-            try await runtime.boot(config: .current(supportDirectory: supportPath))
+            try await runtime.boot(
+                config: .current(
+                    supportDirectory: supportPath, additionalSearchPaths: settings.extensionCustomSearchPaths))
         } catch {
             state = .failed(error.localizedDescription)
             return
@@ -713,7 +718,9 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
         }
 
         do {
-            try await runtime.boot(config: .current(supportDirectory: supportPath))
+            try await runtime.boot(
+                config: .current(
+                    supportDirectory: supportPath, additionalSearchPaths: settings.extensionCustomSearchPaths))
         } catch {
             backgroundFailure = error.localizedDescription
             return

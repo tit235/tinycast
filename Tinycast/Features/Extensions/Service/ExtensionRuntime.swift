@@ -79,6 +79,7 @@ final class ExtensionRuntime: @unchecked Sendable {
 
     private func bootOnQueue(config: ExtensionBootConfig) throws {
         guard context == nil else { return }
+        nodeShims.additionalSearchPaths = config.additionalSearchPaths
         guard
             let url = runtimeOverride
                 ?? Bundle.main.url(forResource: "RaycastRuntime.generated", withExtension: "js"),

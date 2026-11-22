@@ -2032,19 +2032,29 @@ struct ExtensionTests {
     static func missingExecutableChecks() async {
         let name = "tinycast-missing-\(UUID().uuidString)"
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let settingsDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-settings")
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: settingsDirectory)
+        }
         let helper = directory.appendingPathComponent("\(name)-fallback")
+        let settingsHelper = settingsDirectory.appendingPathComponent("\(name)-custom")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try Data("#!/bin/sh\necho custom-path\n".utf8).write(to: helper)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+            try FileManager.default.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
+            try Data("#!/bin/sh\necho settings-path\n".utf8).write(to: settingsHelper)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: settingsHelper.path)
         } catch {
             check("create executable lookup fixtures", false, error.localizedDescription)
             return
         }
         let (runtime, _, recorder) = makeRuntime()
         try? await runtime.boot(
-            config: .current(supportDirectory: FileManager.default.temporaryDirectory))
+            config: .current(
+                supportDirectory: FileManager.default.temporaryDirectory,
+                additionalSearchPaths: [settingsDirectory.path]))
         let command = """
             const { Detail } = require("@raycast/api");
             const React = require("react");
@@ -2065,6 +2075,8 @@ struct ExtensionTests {
                   catch (error) { results.push(error.syscall === "spawnSync \(name)"); }
                   const found = await promisify(execFile)("\(name)-fallback", [], { env: { PATH: "\(directory.path)" } });
                   results.push(found.stdout.trim() === "custom-path");
+                  const viaSettings = await promisify(execFile)("\(name)-custom", []);
+                  results.push(viaSettings.stdout.trim() === "settings-path");
                   setState(JSON.stringify(results));
                 })().catch((error) => setState(error.message));
               }, []);
@@ -2079,8 +2091,9 @@ struct ExtensionTests {
             return value != "pending"
         })
         check(
-            "missing executables report Node's spawn error and bare names search env.PATH",
-            recorder.trees.last?.activeRoot?.string("markdown") == "[true,true,true]",
+            "missing executables report Node's spawn error, and bare names search env.PATH"
+                + " and extensionCustomSearchPaths",
+            recorder.trees.last?.activeRoot?.string("markdown") == "[true,true,true,true]",
             recorder.trees.last?.activeRoot?.string("markdown") ?? "no tree")
         await runtime.stop(session: "sMissing")
     }

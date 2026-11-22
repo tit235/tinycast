@@ -118,6 +118,7 @@ extension SettingsAnchor {
     static let extensionsInstall = Self(
         tab: .extensions,
         title: LocalizedStringResource("extensions-install-section", defaultValue: "Install"))
+    static let extensionsSearchPaths = Self(tab: .extensions, title: "Search Paths")
     static let extensionsStorage = Self(tab: .extensions, title: "Storage")
 
     static let permissionsAccessibility = Self(tab: .permissions, title: "Accessibility")

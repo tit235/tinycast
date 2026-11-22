@@ -446,6 +446,7 @@ run ExtensionIconTests     Tinycast/Platform/Appearance.swift \
                            Tinycast/Features/Extensions/Model/ExtensionBootConfig.swift \
                            Tinycast/Features/Extensions/Model/ExtensionLaunchType.swift \
                            Tinycast/Features/Extensions/Model/ExtensionManifest.swift \
+                           Tinycast/Features/Extensions/Model/ExtensionPackageManager.swift \
                            Tinycast/Features/Extensions/Model/ExtensionRefreshPolicy.swift \
                            Tinycast/Features/Extensions/Model/ExtensionRefreshState.swift \
                            Tinycast/Features/Extensions/Model/RenderNode.swift \
@@ -773,6 +774,7 @@ run slow ExtensionTests    -parse-as-library \
                            $E/Model/ExtensionGridLayout.swift \
                            $E/Model/ExtensionSearchState.swift \
                            $E/Model/ExtensionManifest.swift \
+                           $E/Model/ExtensionPackageManager.swift \
                            $E/Model/ExtensionRefreshPolicy.swift \
                            $E/Model/ExtensionRefreshState.swift \
                            $E/Model/RenderNode.swift \

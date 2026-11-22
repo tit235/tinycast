@@ -58,9 +58,13 @@ enum ExtensionPackageManager: String, CaseIterable, Identifiable, Sendable {
     /// A GUI app inherits no shell PATH; anything rarer is `extensionCustomSearchPaths`.
     static let searchPaths: [String] = [
         "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
         "/usr/local/bin",
         "/usr/bin",
         "/bin",
+        "/usr/sbin",
+        "/sbin",
+        NSHomeDirectory() + "/.local/bin",
         NSHomeDirectory() + "/.volta/bin",
         NSHomeDirectory() + "/.bun/bin",
         NSHomeDirectory() + "/.asdf/shims",

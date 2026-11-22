@@ -8,6 +8,7 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
     private let supportDirectory: URL
     private let executionTimeout: Duration
     private let showsStatusItems: Bool
+    private let additionalSearchPaths: () -> [String]
     private let makeExecution: (InstalledExtension, ExtensionCommand, ExtensionLaunchType) -> Execution?
     private let onError: (String, InstalledExtension, Bool) -> Void
     private var installed: [InstalledExtension] = []
@@ -63,6 +64,7 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
     init(
         storage: ExtensionStorage, commandMetadata: ExtensionCommandMetadataStore, supportDirectory: URL,
         executionTimeout: Duration = .seconds(60), showsStatusItems: Bool = true,
+        additionalSearchPaths: @escaping () -> [String] = { [] },
         makeExecution: @escaping (InstalledExtension, ExtensionCommand, ExtensionLaunchType) -> Execution?,
         onError: @escaping (String, InstalledExtension, Bool) -> Void
     ) {
@@ -71,6 +73,7 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
         self.supportDirectory = supportDirectory
         self.executionTimeout = executionTimeout
         self.showsStatusItems = showsStatusItems
+        self.additionalSearchPaths = additionalSearchPaths
         self.makeExecution = makeExecution
         self.onError = onError
     }
@@ -195,6 +198,7 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
         active = session
         if controllers[entryID]?.isOpen == true { session.enableInteraction() }
         let support = supportDirectory.appendingPathComponent(ExtensionCatalog.safeName(owner.manifest.name))
+        let searchPaths = additionalSearchPaths()
         let context = ExtensionLaunchContext(
             extensionName: owner.manifest.name, extensionTitle: owner.title, commandName: command.name,
             commandMode: command.mode, assetsPath: owner.assetsPath, supportPath: support.path,
@@ -212,7 +216,8 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
                     return try String(contentsOf: bundle, encoding: .utf8)
                 }.value
                 guard !Task.isCancelled else { return }
-                try await runtime.boot(config: .current(supportDirectory: support))
+                try await runtime.boot(
+                    config: .current(supportDirectory: support, additionalSearchPaths: searchPaths))
                 guard !Task.isCancelled else { runtime.shutdown(); return }
                 await runtime.start(
                     session: session.id, code: code, file: bundle, mode: command.mode, context: context)

@@ -37,6 +37,7 @@ struct ExtensionsSettingsView: View {
                 install
                 library
                 compatibility
+                ExtensionSearchPathsSection()
             }
             .settingsEnabled(settings.extensionsEnabled)
 

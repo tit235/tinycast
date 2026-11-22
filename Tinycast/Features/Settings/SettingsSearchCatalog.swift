@@ -643,6 +643,9 @@ enum SettingsSearchCatalog {
             group: .extensionsCompatibility, "Compatibility",
             keywords: ["supported", "unsupported", "raycast api"]),
         .init(
+            group: .extensionsSearchPaths, "Custom search paths",
+            keywords: ["path", "mise", "nix", "asdf", "volta", "homebrew", "toolchain", "node", "spawn"]),
+        .init(
             .extensionsStorage, "Leftover files",
             keywords: ["clean up", "disk", "reclaim", "cache"])
     ]

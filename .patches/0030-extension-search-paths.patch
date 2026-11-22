@@ -1,0 +1,577 @@
+diff --git a/Scripts/run-tests.sh b/Scripts/run-tests.sh
+index 2dd0568f..29dd7a94 100755
+--- a/Scripts/run-tests.sh
++++ b/Scripts/run-tests.sh
+@@ -446,6 +446,7 @@ run ExtensionIconTests     Tinycast/Platform/Appearance.swift \
+                            Tinycast/Features/Extensions/Model/ExtensionBootConfig.swift \
+                            Tinycast/Features/Extensions/Model/ExtensionLaunchType.swift \
+                            Tinycast/Features/Extensions/Model/ExtensionManifest.swift \
++                           Tinycast/Features/Extensions/Model/ExtensionPackageManager.swift \
+                            Tinycast/Features/Extensions/Model/ExtensionRefreshPolicy.swift \
+                            Tinycast/Features/Extensions/Model/ExtensionRefreshState.swift \
+                            Tinycast/Features/Extensions/Model/RenderNode.swift \
+@@ -773,6 +774,7 @@ run slow ExtensionTests    -parse-as-library \
+                            $E/Model/ExtensionGridLayout.swift \
+                            $E/Model/ExtensionSearchState.swift \
+                            $E/Model/ExtensionManifest.swift \
++                           $E/Model/ExtensionPackageManager.swift \
+                            $E/Model/ExtensionRefreshPolicy.swift \
+                            $E/Model/ExtensionRefreshState.swift \
+                            $E/Model/RenderNode.swift \
+diff --git a/Tests/ExtensionTests.swift b/Tests/ExtensionTests.swift
+index 27bb4e15..77665ac7 100644
+--- a/Tests/ExtensionTests.swift
++++ b/Tests/ExtensionTests.swift
+@@ -2032,19 +2032,29 @@ struct ExtensionTests {
+     static func missingExecutableChecks() async {
+         let name = "tinycast-missing-\(UUID().uuidString)"
+         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+-        defer { try? FileManager.default.removeItem(at: directory) }
++        let settingsDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-settings")
++        defer {
++            try? FileManager.default.removeItem(at: directory)
++            try? FileManager.default.removeItem(at: settingsDirectory)
++        }
+         let helper = directory.appendingPathComponent("\(name)-fallback")
++        let settingsHelper = settingsDirectory.appendingPathComponent("\(name)-custom")
+         do {
+             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+             try Data("#!/bin/sh\necho custom-path\n".utf8).write(to: helper)
+             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
++            try FileManager.default.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
++            try Data("#!/bin/sh\necho settings-path\n".utf8).write(to: settingsHelper)
++            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: settingsHelper.path)
+         } catch {
+             check("create executable lookup fixtures", false, error.localizedDescription)
+             return
+         }
+         let (runtime, _, recorder) = makeRuntime()
+         try? await runtime.boot(
+-            config: .current(supportDirectory: FileManager.default.temporaryDirectory))
++            config: .current(
++                supportDirectory: FileManager.default.temporaryDirectory,
++                additionalSearchPaths: [settingsDirectory.path]))
+         let command = """
+             const { Detail } = require("@raycast/api");
+             const React = require("react");
+@@ -2065,6 +2075,8 @@ struct ExtensionTests {
+                   catch (error) { results.push(error.syscall === "spawnSync \(name)"); }
+                   const found = await promisify(execFile)("\(name)-fallback", [], { env: { PATH: "\(directory.path)" } });
+                   results.push(found.stdout.trim() === "custom-path");
++                  const viaSettings = await promisify(execFile)("\(name)-custom", []);
++                  results.push(viaSettings.stdout.trim() === "settings-path");
+                   setState(JSON.stringify(results));
+                 })().catch((error) => setState(error.message));
+               }, []);
+@@ -2079,8 +2091,9 @@ struct ExtensionTests {
+             return value != "pending"
+         })
+         check(
+-            "missing executables report Node's spawn error and bare names search env.PATH",
+-            recorder.trees.last?.activeRoot?.string("markdown") == "[true,true,true]",
++            "missing executables report Node's spawn error, and bare names search env.PATH"
++                + " and extensionCustomSearchPaths",
++            recorder.trees.last?.activeRoot?.string("markdown") == "[true,true,true,true]",
+             recorder.trees.last?.activeRoot?.string("markdown") ?? "no tree")
+         await runtime.stop(session: "sMissing")
+     }
+diff --git a/Tinycast/App/AppCore.swift b/Tinycast/App/AppCore.swift
+index e5647c99..4c696eb6 100644
+--- a/Tinycast/App/AppCore.swift
++++ b/Tinycast/App/AppCore.swift
+@@ -270,7 +270,7 @@ final class AppCore {
+         appIndex = AppIndex(ranking: launcherRanking, aliases: aliases)
+         let clipboardManager = ClipboardManager(store: clipboardStore, settings: settings)
+         self.clipboardManager = clipboardManager
+-        extensions = ExtensionManager(clipboardStore: clipboardStore)
++        extensions = ExtensionManager(clipboardStore: clipboardStore, settings: settings)
+         snippetsStore = SnippetsStore(repository: Self.snippetsRepository(for: settings))
+         textInjector = TextInjector(
+             clipboardManager: clipboardManager,
+diff --git a/Tinycast/Features/Extensions/Model/ExtensionBootConfig.swift b/Tinycast/Features/Extensions/Model/ExtensionBootConfig.swift
+index cd43e835..71912310 100644
+--- a/Tinycast/Features/Extensions/Model/ExtensionBootConfig.swift
++++ b/Tinycast/Features/Extensions/Model/ExtensionBootConfig.swift
+@@ -17,19 +17,21 @@ struct ExtensionBootConfig: Sendable {
+     var effectiveGroupID: gid_t
+     var groupIDs: [gid_t]
+     var environmentVariables: [String: String]
++    var additionalSearchPaths: [String]
+ 
+-    static func current(supportDirectory: URL) -> ExtensionBootConfig {
++    static func current(supportDirectory: URL, additionalSearchPaths: [String] = []) -> ExtensionBootConfig {
+         let info = ProcessInfo.processInfo
+         var arch = "arm64"
+         #if arch(x86_64)
+             arch = "x64"
+         #endif
+         // A GUI app inherits a bare environment; extensions shelling out expect a login-ish PATH.
++        let home = FileManager.default.homeDirectoryForCurrentUser.path
+         var variables = info.environment
+         variables["PATH"] =
+-            (variables["PATH"].map { $0 + ":" } ?? "")
+-            + "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+-        variables["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
++            (additionalSearchPaths + (variables["PATH"].map { [$0] } ?? []) + ExtensionPackageManager.searchPaths)
++            .joined(separator: ":")
++        variables["HOME"] = home
+ 
+         var groups = [gid_t](repeating: 0, count: Int(getgroups(0, nil)))
+         let groupCount = getgroups(Int32(groups.count), &groups)
+@@ -50,7 +52,8 @@ struct ExtensionBootConfig: Sendable {
+             effectiveUserID: geteuid(),
+             effectiveGroupID: getegid(),
+             groupIDs: groups,
+-            environmentVariables: variables)
++            environmentVariables: variables,
++            additionalSearchPaths: additionalSearchPaths)
+     }
+ 
+     func jsonString() -> String {
+diff --git a/Tinycast/Features/Extensions/Model/ExtensionPackageManager.swift b/Tinycast/Features/Extensions/Model/ExtensionPackageManager.swift
+index 9911793f..4afa330c 100644
+--- a/Tinycast/Features/Extensions/Model/ExtensionPackageManager.swift
++++ b/Tinycast/Features/Extensions/Model/ExtensionPackageManager.swift
+@@ -58,9 +58,13 @@ enum ExtensionPackageManager: String, CaseIterable, Identifiable, Sendable {
+     /// A GUI app inherits no shell PATH; anything rarer is `extensionCustomSearchPaths`.
+     static let searchPaths: [String] = [
+         "/opt/homebrew/bin",
++        "/opt/homebrew/sbin",
+         "/usr/local/bin",
+         "/usr/bin",
+         "/bin",
++        "/usr/sbin",
++        "/sbin",
++        NSHomeDirectory() + "/.local/bin",
+         NSHomeDirectory() + "/.volta/bin",
+         NSHomeDirectory() + "/.bun/bin",
+         NSHomeDirectory() + "/.asdf/shims",
+diff --git a/Tinycast/Features/Extensions/Service/ExtensionFetcher.swift b/Tinycast/Features/Extensions/Service/ExtensionFetcher.swift
+index 11cdb2a1..93ebad14 100644
+--- a/Tinycast/Features/Extensions/Service/ExtensionFetcher.swift
++++ b/Tinycast/Features/Extensions/Service/ExtensionFetcher.swift
+@@ -201,7 +201,9 @@ enum ExtensionAsyncProcess {
+     private static let uncollected = Mutex<[Int32: (child: Child, watchdog: DispatchSourceTimer?)]>([:])
+ 
+     /// An app bundle inherits no login shell, so a bare `brew` would otherwise fail.
+-    static func resolveExecutable(_ command: String, searchPath: String?) -> URL? {
++    static func resolveExecutable(
++        _ command: String, searchPath: String?, additionalSearchPaths: [String] = []
++    ) -> URL? {
+         let fileManager = FileManager.default
+         if command.contains("/") {
+             let expanded = (command as NSString).expandingTildeInPath
+@@ -210,11 +212,9 @@ enum ExtensionAsyncProcess {
+         }
+         let search =
+             (searchPath ?? "").split(separator: ":").map(String.init)
++            + additionalSearchPaths
+             + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+-            + [
+-                "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin",
+-                "/sbin"
+-            ]
++            + ExtensionPackageManager.searchPaths
+         for directory in search {
+             let candidate = (directory as NSString).appendingPathComponent(command)
+             if fileManager.isExecutableFile(atPath: candidate) {
+diff --git a/Tinycast/Features/Extensions/Service/ExtensionManager.swift b/Tinycast/Features/Extensions/Service/ExtensionManager.swift
+index 5db1bda4..ac76e042 100644
+--- a/Tinycast/Features/Extensions/Service/ExtensionManager.swift
++++ b/Tinycast/Features/Extensions/Service/ExtensionManager.swift
+@@ -44,6 +44,7 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
+     private let storeVersions = ExtensionVersionStore(fileURL: ExtensionCatalog.storeVersionsFile())
+     @ObservationIgnored private let runtime: ExtensionRuntime
+     @ObservationIgnored private let bridge: ExtensionHostBridge
++    @ObservationIgnored private let settings: AppSettings
+     @ObservationIgnored private weak var appIndex: AppIndex?
+     @ObservationIgnored private weak var coordinator: ExtensionCoordinator?
+ 
+@@ -59,10 +60,11 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
+     @ObservationIgnored private var nextToastID = 1
+     @ObservationIgnored private var searchState = ExtensionSearchState()
+ 
+-    init(clipboardStore: ClipboardStore) {
++    init(clipboardStore: ClipboardStore, settings: AppSettings) {
+         storage = ExtensionStorage(directory: ExtensionCatalog.storageDirectory())
+         bridge = ExtensionHostBridge(clipboardStore: clipboardStore)
+         runtime = ExtensionRuntime(hostAPI: bridge)
++        self.settings = settings
+         bridge.context = self
+     }
+ 
+@@ -97,6 +99,7 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
+                 storage: storage,
+                 commandMetadata: commandMetadata,
+                 supportDirectory: ExtensionCatalog.supportRoot(),
++                additionalSearchPaths: { [weak self] in self?.settings.extensionCustomSearchPaths ?? [] },
+                 makeExecution: { [weak self, weak coordinator] owner, command, type in
+                     guard let self, let coordinator else { return nil }
+                     let host = ExtensionMenuBarHost(
+@@ -444,7 +447,9 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
+ 
+         do {
+             // No-op while a context is already up; after `stop()` this builds a fresh one.
+-            try await runtime.boot(config: .current(supportDirectory: supportPath))
++            try await runtime.boot(
++                config: .current(
++                    supportDirectory: supportPath, additionalSearchPaths: settings.extensionCustomSearchPaths))
+         } catch {
+             state = .failed(error.localizedDescription)
+             return
+@@ -713,7 +718,9 @@ final class ExtensionManager: ExtensionRuntimeDelegate, ExtensionHostContext {
+         }
+ 
+         do {
+-            try await runtime.boot(config: .current(supportDirectory: supportPath))
++            try await runtime.boot(
++                config: .current(
++                    supportDirectory: supportPath, additionalSearchPaths: settings.extensionCustomSearchPaths))
+         } catch {
+             backgroundFailure = error.localizedDescription
+             return
+diff --git a/Tinycast/Features/Extensions/Service/ExtensionMenuBarManager.swift b/Tinycast/Features/Extensions/Service/ExtensionMenuBarManager.swift
+index 57fe1134..d482f09b 100644
+--- a/Tinycast/Features/Extensions/Service/ExtensionMenuBarManager.swift
++++ b/Tinycast/Features/Extensions/Service/ExtensionMenuBarManager.swift
+@@ -8,6 +8,7 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
+     private let supportDirectory: URL
+     private let executionTimeout: Duration
+     private let showsStatusItems: Bool
++    private let additionalSearchPaths: () -> [String]
+     private let makeExecution: (InstalledExtension, ExtensionCommand, ExtensionLaunchType) -> Execution?
+     private let onError: (String, InstalledExtension, Bool) -> Void
+     private var installed: [InstalledExtension] = []
+@@ -63,6 +64,7 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
+     init(
+         storage: ExtensionStorage, commandMetadata: ExtensionCommandMetadataStore, supportDirectory: URL,
+         executionTimeout: Duration = .seconds(60), showsStatusItems: Bool = true,
++        additionalSearchPaths: @escaping () -> [String] = { [] },
+         makeExecution: @escaping (InstalledExtension, ExtensionCommand, ExtensionLaunchType) -> Execution?,
+         onError: @escaping (String, InstalledExtension, Bool) -> Void
+     ) {
+@@ -71,6 +73,7 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
+         self.supportDirectory = supportDirectory
+         self.executionTimeout = executionTimeout
+         self.showsStatusItems = showsStatusItems
++        self.additionalSearchPaths = additionalSearchPaths
+         self.makeExecution = makeExecution
+         self.onError = onError
+     }
+@@ -195,6 +198,7 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
+         active = session
+         if controllers[entryID]?.isOpen == true { session.enableInteraction() }
+         let support = supportDirectory.appendingPathComponent(ExtensionCatalog.safeName(owner.manifest.name))
++        let searchPaths = additionalSearchPaths()
+         let context = ExtensionLaunchContext(
+             extensionName: owner.manifest.name, extensionTitle: owner.title, commandName: command.name,
+             commandMode: command.mode, assetsPath: owner.assetsPath, supportPath: support.path,
+@@ -212,7 +216,8 @@ final class ExtensionMenuBarManager: ExtensionRuntimeDelegate {
+                     return try String(contentsOf: bundle, encoding: .utf8)
+                 }.value
+                 guard !Task.isCancelled else { return }
+-                try await runtime.boot(config: .current(supportDirectory: support))
++                try await runtime.boot(
++                    config: .current(supportDirectory: support, additionalSearchPaths: searchPaths))
+                 guard !Task.isCancelled else { runtime.shutdown(); return }
+                 await runtime.start(
+                     session: session.id, code: code, file: bundle, mode: command.mode, context: context)
+diff --git a/Tinycast/Features/Extensions/Service/ExtensionNodeShims.swift b/Tinycast/Features/Extensions/Service/ExtensionNodeShims.swift
+index 62bf4522..a31846a8 100644
+--- a/Tinycast/Features/Extensions/Service/ExtensionNodeShims.swift
++++ b/Tinycast/Features/Extensions/Service/ExtensionNodeShims.swift
+@@ -7,6 +7,7 @@ import Foundation
+ final class ExtensionNodeShims: @unchecked Sendable {
+     private let fileManager = FileManager.default
+     private var fileHandles: [Int32: FileHandle] = [:]
++    var additionalSearchPaths: [String] = []
+ 
+     /// A lock flag like `O_EXLOCK` would block the JS queue with no way back.
+     private static let openableFlags =
+@@ -552,7 +553,9 @@ final class ExtensionNodeShims: @unchecked Sendable {
+             task.executableURL = URL(fileURLWithPath: "/bin/sh")
+             task.arguments = ["-c", command]
+         } else {
+-            guard let resolved = ExtensionAsyncProcess.resolveExecutable(command, searchPath: environment?["PATH"])
++            guard
++                let resolved = ExtensionAsyncProcess.resolveExecutable(
++                    command, searchPath: environment?["PATH"], additionalSearchPaths: additionalSearchPaths)
+             else {
+                 throw ShimError.missingExecutable(
+                     command, arguments: spec["args"] as? [String] ?? [], operation: operation)
+diff --git a/Tinycast/Features/Extensions/Service/ExtensionRuntime.swift b/Tinycast/Features/Extensions/Service/ExtensionRuntime.swift
+index 1ee15023..39e3d79d 100644
+--- a/Tinycast/Features/Extensions/Service/ExtensionRuntime.swift
++++ b/Tinycast/Features/Extensions/Service/ExtensionRuntime.swift
+@@ -79,6 +79,7 @@ final class ExtensionRuntime: @unchecked Sendable {
+ 
+     private func bootOnQueue(config: ExtensionBootConfig) throws {
+         guard context == nil else { return }
++        nodeShims.additionalSearchPaths = config.additionalSearchPaths
+         guard
+             let url = runtimeOverride
+                 ?? Bundle.main.url(forResource: "RaycastRuntime.generated", withExtension: "js"),
+diff --git a/Tinycast/Features/Extensions/Settings/ExtensionGitHubPanel.swift b/Tinycast/Features/Extensions/Settings/ExtensionGitHubPanel.swift
+index d7f175d9..d8538821 100644
+--- a/Tinycast/Features/Extensions/Settings/ExtensionGitHubPanel.swift
++++ b/Tinycast/Features/Extensions/Settings/ExtensionGitHubPanel.swift
+@@ -128,52 +128,25 @@ struct ExtensionGitHubPanel: View {
+ /// Its own view, so typing a repository doesn't probe the disk for package managers per key.
+ private struct ExtensionToolchainFields: View {
+     @Environment(AppCore.self) private var core
+-    /// Written back only on a real edit, so a round trip cannot strip the separator.
+-    @State private var searchPathsText = ""
+ 
+     var body: some View {
+         @Bindable var settings = core.settings
+-        return VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
+-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+-                HStack {
+-                    Text("Package manager").font(.callout.weight(.medium))
+-                    Spacer()
+-                    Picker("", selection: $settings.extensionPackageManager) {
+-                        ForEach(ExtensionPackageManager.allCases) { manager in
+-                            Text(manager.title).tag(manager)
+-                        }
++        return VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
++            HStack {
++                Text("Package manager").font(.callout.weight(.medium))
++                Spacer()
++                Picker("", selection: $settings.extensionPackageManager) {
++                    ForEach(ExtensionPackageManager.allCases) { manager in
++                        Text(manager.title).tag(manager)
+                     }
+-                    .labelsHidden()
+-                    .fixedSize()
+                 }
+-                Text(packageManagerDetail)
+-                    .font(.caption)
+-                    .foregroundStyle(.secondary)
+-                    .fixedSize(horizontal: false, vertical: true)
++                .labelsHidden()
++                .fixedSize()
+             }
+-
+-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+-                Text("Custom search paths").font(.callout.weight(.medium))
+-                TextField("", text: $searchPathsText, prompt: Text(verbatim: "~/.local/share/mise/shims"))
+-                    .extensionSettingsEditorTextField()
+-                    .pointerStyle(.horizontalText)
+-                    .onChange(of: searchPathsText) { _, value in
+-                        settings.extensionCustomSearchPaths = Self.parseSearchPaths(value)
+-                    }
+-                Text(
+-                    """
+-                    Colon-separated, like PATH — checked before Homebrew and the rest. For mise: \
+-                    ~/.local/share/mise/shims. For Nix (Home Manager): \
+-                    /etc/profiles/per-user/<you>/home-path/bin.
+-                    """
+-                )
++            Text(packageManagerDetail)
+                 .font(.caption)
+                 .foregroundStyle(.secondary)
+                 .fixedSize(horizontal: false, vertical: true)
+-            }
+-        }
+-        .onAppear {
+-            searchPathsText = core.settings.extensionCustomSearchPaths.joined(separator: ":")
+         }
+     }
+ 
+@@ -192,10 +165,4 @@ private struct ExtensionToolchainFields: View {
+             ? String(localized: "Found \(resolved.manager.title) at \(resolved.url.path).")
+             : String(localized: "Found at \(resolved.url.path).")
+     }
+-
+-    private static func parseSearchPaths(_ text: String) -> [String] {
+-        text.split(separator: ":", omittingEmptySubsequences: true)
+-            .map { $0.trimmingCharacters(in: .whitespaces) }
+-            .filter { !$0.isEmpty }
+-    }
+ }
+diff --git a/Tinycast/Features/Extensions/Settings/ExtensionSearchPathsSection.swift b/Tinycast/Features/Extensions/Settings/ExtensionSearchPathsSection.swift
+new file mode 100644
+index 00000000..2ef541b8
+--- /dev/null
++++ b/Tinycast/Features/Extensions/Settings/ExtensionSearchPathsSection.swift
+@@ -0,0 +1,44 @@
++import SwiftUI
++
++struct ExtensionSearchPathsSection: View {
++    @Environment(AppCore.self) private var core
++    /// Written back only on a real edit, so a round trip cannot strip the separator.
++    @State private var searchPathsText = ""
++
++    var body: some View {
++        @Bindable var settings = core.settings
++        return Section {
++            LabeledContent {
++                TextField(
++                    "Custom search paths", text: $searchPathsText,
++                    prompt: Text(verbatim: "~/.local/share/mise/shims")
++                )
++                .labelsHidden()
++                .font(.callout.monospaced())
++                .autocorrectionDisabled()
++                .pointerStyle(.horizontalText)
++                .onChange(of: searchPathsText) { _, value in
++                    settings.extensionCustomSearchPaths = Self.parseSearchPaths(value)
++                }
++            } label: {
++                Text("Custom search paths")
++                Text(
++                    """
++                    Colon-separated, like PATH — checked before Homebrew and the rest. For mise: \
++                    ~/.local/share/mise/shims. For Nix (Home Manager): \
++                    /etc/profiles/per-user/<you>/home-path/bin.
++                    """
++                )
++            }
++        } header: {
++            SettingsSectionHeader(.extensionsSearchPaths)
++        }
++        .onAppear { searchPathsText = core.settings.extensionCustomSearchPaths.joined(separator: ":") }
++    }
++
++    private static func parseSearchPaths(_ text: String) -> [String] {
++        text.split(separator: ":", omittingEmptySubsequences: true)
++            .map { $0.trimmingCharacters(in: .whitespaces) }
++            .filter { !$0.isEmpty }
++    }
++}
+diff --git a/Tinycast/Features/Extensions/Settings/ExtensionsSettingsView.swift b/Tinycast/Features/Extensions/Settings/ExtensionsSettingsView.swift
+index d02c0678..fd7510a6 100644
+--- a/Tinycast/Features/Extensions/Settings/ExtensionsSettingsView.swift
++++ b/Tinycast/Features/Extensions/Settings/ExtensionsSettingsView.swift
+@@ -37,6 +37,7 @@ struct ExtensionsSettingsView: View {
+                 install
+                 library
+                 compatibility
++                ExtensionSearchPathsSection()
+             }
+             .settingsEnabled(settings.extensionsEnabled)
+ 
+diff --git a/Tinycast/Features/Settings/SettingsAnchor.swift b/Tinycast/Features/Settings/SettingsAnchor.swift
+index 791717b3..a8fd030e 100644
+--- a/Tinycast/Features/Settings/SettingsAnchor.swift
++++ b/Tinycast/Features/Settings/SettingsAnchor.swift
+@@ -118,6 +118,7 @@ extension SettingsAnchor {
+     static let extensionsInstall = Self(
+         tab: .extensions,
+         title: LocalizedStringResource("extensions-install-section", defaultValue: "Install"))
++    static let extensionsSearchPaths = Self(tab: .extensions, title: "Search Paths")
+     static let extensionsStorage = Self(tab: .extensions, title: "Storage")
+ 
+     static let permissionsAccessibility = Self(tab: .permissions, title: "Accessibility")
+diff --git a/Tinycast/Features/Settings/SettingsSearchCatalog.swift b/Tinycast/Features/Settings/SettingsSearchCatalog.swift
+index 05b1bb68..d5b2f9cb 100644
+--- a/Tinycast/Features/Settings/SettingsSearchCatalog.swift
++++ b/Tinycast/Features/Settings/SettingsSearchCatalog.swift
+@@ -642,6 +642,9 @@ enum SettingsSearchCatalog {
+         .init(
+             group: .extensionsCompatibility, "Compatibility",
+             keywords: ["supported", "unsupported", "raycast api"]),
++        .init(
++            group: .extensionsSearchPaths, "Custom search paths",
++            keywords: ["path", "mise", "nix", "asdf", "volta", "homebrew", "toolchain", "node", "spawn"]),
+         .init(
+             .extensionsStorage, "Leftover files",
+             keywords: ["clean up", "disk", "reclaim", "cache"])
+diff --git a/Tinycast/Resources/Localizable.xcstrings b/Tinycast/Resources/Localizable.xcstrings
+index d8d373b5..029419d4 100644
+--- a/Tinycast/Resources/Localizable.xcstrings
++++ b/Tinycast/Resources/Localizable.xcstrings
+@@ -107554,6 +107554,58 @@
+         }
+       }
+     },
++    "Search Paths" : {
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Suchpfade"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Rutas de búsqueda"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Chemins de recherche"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "検索パス"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "검색 경로"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Caminhos de busca"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Пути поиска"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "搜索路径"
++          }
++        }
++      }
++    },
+     "Search Quicklinks" : {
+       "localizations" : {
+         "de" : {
+diff --git a/docs/features/extensions.md b/docs/features/extensions.md
+index b7dc8d11..74651eb8 100644
+--- a/docs/features/extensions.md
++++ b/docs/features/extensions.md
+@@ -559,15 +559,24 @@ build script is the contract, a `postinstall` is code nobody asked to run. The p
+ inherits none of a login shell's `PATH`, so `ExtensionPackageManager.searchPaths` is where they are
+ looked for, version managers included (Homebrew, Volta, asdf, mise, fnm, nvm, Yarn).
+ 
+-That hardcoded list can never cover every toolchain layout (Nix among them), so the panel also has
+-"Custom search paths": a `:`-separated list, `extensionCustomSearchPaths` in `AppSettings`, checked
+-_before_ the built-in list wherever it resolves a package manager or Node. Set once, it applies to
+-every future install. `ExtensionInstaller` takes it as `additionalSearchPaths` rather than reading
+-settings itself, keeping the Model/Service split intact.
++That hardcoded list can never cover every toolchain layout (Nix among them), so Settings › Extensions
++has its own "Search Paths" section (`ExtensionSearchPathsSection`, not inside any install panel —
++it applies whichever way an extension installs or runs): a `:`-separated list,
++`extensionCustomSearchPaths` in `AppSettings`, checked _before_ the built-in list wherever it resolves
++a package manager or Node. Set once, it applies to every future install. `ExtensionInstaller` takes it
++as `additionalSearchPaths` rather than reading settings itself, keeping the Model/Service split intact.
++
++`ExtensionPackageManager.searchPaths` is also the one fallback list a running extension's own
++`child_process.spawn`/`exec` resolves bare commands against (`ExtensionAsyncProcess.resolveExecutable`
++in `ExtensionFetcher.swift`) and the one the boot-time `process.env.PATH` is built from
++(`ExtensionBootConfig.current`) — a single source rather than three separate hardcoded lists.
++`extensionCustomSearchPaths` reaches both the same way `ExtensionInstaller` takes it: as
++`additionalSearchPaths` threaded in from `ExtensionManager`/`ExtensionMenuBarManager` at each boot,
++checked first, never read from settings by the Model or Service type itself.
+ 
+ Neither the package manager nor the custom search paths ride a settings backup: the first names a tool
+ the machine an import lands on may not have, and the second is a set of paths specific to this Mac's
+-toolchain layout.
++toolchain layout — true for install, boot and runtime spawn alike.
+ 
+ ## Updates
+ 

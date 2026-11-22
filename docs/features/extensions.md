@@ -559,15 +559,24 @@ build script is the contract, a `postinstall` is code nobody asked to run. The p
 inherits none of a login shell's `PATH`, so `ExtensionPackageManager.searchPaths` is where they are
 looked for, version managers included (Homebrew, Volta, asdf, mise, fnm, nvm, Yarn).
 
-That hardcoded list can never cover every toolchain layout (Nix among them), so the panel also has
-"Custom search paths": a `:`-separated list, `extensionCustomSearchPaths` in `AppSettings`, checked
-_before_ the built-in list wherever it resolves a package manager or Node. Set once, it applies to
-every future install. `ExtensionInstaller` takes it as `additionalSearchPaths` rather than reading
-settings itself, keeping the Model/Service split intact.
+That hardcoded list can never cover every toolchain layout (Nix among them), so Settings › Extensions
+has its own "Search Paths" section (`ExtensionSearchPathsSection`, not inside any install panel —
+it applies whichever way an extension installs or runs): a `:`-separated list,
+`extensionCustomSearchPaths` in `AppSettings`, checked _before_ the built-in list wherever it resolves
+a package manager or Node. Set once, it applies to every future install. `ExtensionInstaller` takes it
+as `additionalSearchPaths` rather than reading settings itself, keeping the Model/Service split intact.
+
+`ExtensionPackageManager.searchPaths` is also the one fallback list a running extension's own
+`child_process.spawn`/`exec` resolves bare commands against (`ExtensionAsyncProcess.resolveExecutable`
+in `ExtensionFetcher.swift`) and the one the boot-time `process.env.PATH` is built from
+(`ExtensionBootConfig.current`) — a single source rather than three separate hardcoded lists.
+`extensionCustomSearchPaths` reaches both the same way `ExtensionInstaller` takes it: as
+`additionalSearchPaths` threaded in from `ExtensionManager`/`ExtensionMenuBarManager` at each boot,
+checked first, never read from settings by the Model or Service type itself.
 
 Neither the package manager nor the custom search paths ride a settings backup: the first names a tool
 the machine an import lands on may not have, and the second is a set of paths specific to this Mac's
-toolchain layout.
+toolchain layout — true for install, boot and runtime spawn alike.
 
 ## Updates
 

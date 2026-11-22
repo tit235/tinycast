@@ -7,6 +7,7 @@ import Foundation
 final class ExtensionNodeShims: @unchecked Sendable {
     private let fileManager = FileManager.default
     private var fileHandles: [Int32: FileHandle] = [:]
+    var additionalSearchPaths: [String] = []
 
     /// A lock flag like `O_EXLOCK` would block the JS queue with no way back.
     private static let openableFlags =
@@ -552,7 +553,9 @@ final class ExtensionNodeShims: @unchecked Sendable {
             task.executableURL = URL(fileURLWithPath: "/bin/sh")
             task.arguments = ["-c", command]
         } else {
-            guard let resolved = ExtensionAsyncProcess.resolveExecutable(command, searchPath: environment?["PATH"])
+            guard
+                let resolved = ExtensionAsyncProcess.resolveExecutable(
+                    command, searchPath: environment?["PATH"], additionalSearchPaths: additionalSearchPaths)
             else {
                 throw ShimError.missingExecutable(
                     command, arguments: spec["args"] as? [String] ?? [], operation: operation)

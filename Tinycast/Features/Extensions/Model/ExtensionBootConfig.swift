@@ -17,19 +17,21 @@ struct ExtensionBootConfig: Sendable {
     var effectiveGroupID: gid_t
     var groupIDs: [gid_t]
     var environmentVariables: [String: String]
+    var additionalSearchPaths: [String]
 
-    static func current(supportDirectory: URL) -> ExtensionBootConfig {
+    static func current(supportDirectory: URL, additionalSearchPaths: [String] = []) -> ExtensionBootConfig {
         let info = ProcessInfo.processInfo
         var arch = "arm64"
         #if arch(x86_64)
             arch = "x64"
         #endif
         // A GUI app inherits a bare environment; extensions shelling out expect a login-ish PATH.
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         var variables = info.environment
         variables["PATH"] =
-            (variables["PATH"].map { $0 + ":" } ?? "")
-            + "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        variables["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
+            (additionalSearchPaths + (variables["PATH"].map { [$0] } ?? []) + ExtensionPackageManager.searchPaths)
+            .joined(separator: ":")
+        variables["HOME"] = home
 
         var groups = [gid_t](repeating: 0, count: Int(getgroups(0, nil)))
         let groupCount = getgroups(Int32(groups.count), &groups)
@@ -50,7 +52,8 @@ struct ExtensionBootConfig: Sendable {
             effectiveUserID: geteuid(),
             effectiveGroupID: getegid(),
             groupIDs: groups,
-            environmentVariables: variables)
+            environmentVariables: variables,
+            additionalSearchPaths: additionalSearchPaths)
     }
 
     func jsonString() -> String {
