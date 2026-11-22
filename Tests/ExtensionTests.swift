@@ -564,6 +564,31 @@ struct ExtensionTests {
         check("destructive style", actions.last?.isDestructive == true)
         sectionBoundaryChecks()
         submenuPrimaryActionChecks()
+        implicitShortcutChecks()
+    }
+
+    /// The panel's stated ⌘↵ must split into two keycaps like any other multi-key shortcut.
+    static func implicitShortcutChecks() {
+        func action(_ id: Int) -> String {
+            #"{"id":\#(id),"type":"Action","props":{"title":"A\#(id)"},"children":[]}"#
+        }
+        let json = """
+            {"id":1,"type":"ActionPanel","props":{},"children":[\(action(2)), \(action(3))]}
+            """
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+            let panel = RenderNode(json: object)
+        else {
+            check("implicit-shortcut fixture decodes", false)
+            return
+        }
+        let actions = ExtensionScreen.actions(in: panel)
+        let implicit = ExtensionScreen.implicitShortcuts(in: actions)
+        check(
+            "the first action's implicit ↵ is a single keycap",
+            implicit[actions[0].id] == ["↵"], String(describing: implicit[actions[0].id]))
+        check(
+            "the second action's implicit ⌘↵ splits into two keycaps, not one",
+            implicit[actions[1].id] == ["⌘", "↵"], String(describing: implicit[actions[1].id]))
     }
 
     /// Boundaries follow section nodes: Raycast authors mostly leave sections untitled.

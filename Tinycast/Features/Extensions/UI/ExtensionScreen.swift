@@ -240,12 +240,12 @@ struct ExtensionScreen {
     }
 
     /// The keys the panel states for actions that carry none: ↵ on the first, ⌘↵ on the second.
-    static func implicitShortcuts(in actions: [ExtensionAction]) -> [ExtensionAction.ID: String] {
-        var result: [ExtensionAction.ID: String] = [:]
+    static func implicitShortcuts(in actions: [ExtensionAction]) -> [ExtensionAction.ID: [String]] {
+        var result: [ExtensionAction.ID: [String]] = [:]
         if let first = actions.first, first.node.object("shortcut") == nil {
-            result[first.id] = "↵"
+            result[first.id] = ["↵"]
         }
-        if let second = secondaryAction(in: actions) { result[second.id] = "⌘↵" }
+        if let second = secondaryAction(in: actions) { result[second.id] = ["⌘", "↵"] }
         return result
     }
 

@@ -66,6 +66,42 @@ index 19f590c7..e19e68e8 100644
  
          print(failures == 0 ? "Entry icon tests passed" : "\(failures) tests failed")
          exit(failures == 0 ? 0 : 1)
+diff --git a/Tests/ExtensionTests.swift b/Tests/ExtensionTests.swift
+index 77665ac7..af266f35 100644
+--- a/Tests/ExtensionTests.swift
++++ b/Tests/ExtensionTests.swift
+@@ -564,6 +564,31 @@ struct ExtensionTests {
+         check("destructive style", actions.last?.isDestructive == true)
+         sectionBoundaryChecks()
+         submenuPrimaryActionChecks()
++        implicitShortcutChecks()
++    }
++
++    /// The panel's stated ⌘↵ must split into two keycaps like any other multi-key shortcut.
++    static func implicitShortcutChecks() {
++        func action(_ id: Int) -> String {
++            #"{"id":\#(id),"type":"Action","props":{"title":"A\#(id)"},"children":[]}"#
++        }
++        let json = """
++            {"id":1,"type":"ActionPanel","props":{},"children":[\(action(2)), \(action(3))]}
++            """
++        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
++            let panel = RenderNode(json: object)
++        else {
++            check("implicit-shortcut fixture decodes", false)
++            return
++        }
++        let actions = ExtensionScreen.actions(in: panel)
++        let implicit = ExtensionScreen.implicitShortcuts(in: actions)
++        check(
++            "the first action's implicit ↵ is a single keycap",
++            implicit[actions[0].id] == ["↵"], String(describing: implicit[actions[0].id]))
++        check(
++            "the second action's implicit ⌘↵ splits into two keycaps, not one",
++            implicit[actions[1].id] == ["⌘", "↵"], String(describing: implicit[actions[1].id]))
+     }
+
+     /// Boundaries follow section nodes: Raycast authors mostly leave sections untitled.
 diff --git a/Tinycast/Features/Extensions/Model/ExtensionDeepLink.swift b/Tinycast/Features/Extensions/Model/ExtensionDeepLink.swift
 index 0c816470..69bfff1e 100644
 --- a/Tinycast/Features/Extensions/Model/ExtensionDeepLink.swift
@@ -128,19 +164,17 @@ index b588076c..00f1d332 100644
 -    static func rows(_ actions: [ExtensionAction], assetsPath: String?) -> [ExtensionActionItem] {
 +    static func rows(
 +        _ actions: [ExtensionAction], assetsPath: String?,
-+        implicitShortcuts: [ExtensionAction.ID: String] = [:]
++        implicitShortcuts: [ExtensionAction.ID: [String]] = [:]
 +    ) -> [ExtensionActionItem] {
          actions.map { action in
              ExtensionActionItem(
                  title: action.title,
-@@ -248,7 +251,9 @@ enum ExtensionActionsMenu {
+@@ -248,7 +251,7 @@ enum ExtensionActionsMenu {
                      // Read rather than injected: a panel is rebuilt each time it opens.
                      isDark: NSApp.effectiveAppearance.isDark,
                      isDestructive: action.isDestructive),
 -                shortcutCaps: action.shortcutCaps ?? [],
-+                shortcutCaps: action.shortcutCaps
-+                    ?? implicitShortcuts[action.id].map { [$0] }
-+                    ?? [],
++                shortcutCaps: action.shortcutCaps ?? implicitShortcuts[action.id] ?? [],
                  isDestructive: action.isDestructive,
                  startsSection: action.startsSection)
          }
@@ -205,12 +239,12 @@ index 1de4cfc1..b732484e 100644
 +    }
 +
 +    /// The keys the panel states for actions that carry none: ↵ on the first, ⌘↵ on the second.
-+    static func implicitShortcuts(in actions: [ExtensionAction]) -> [ExtensionAction.ID: String] {
-+        var result: [ExtensionAction.ID: String] = [:]
++    static func implicitShortcuts(in actions: [ExtensionAction]) -> [ExtensionAction.ID: [String]] {
++        var result: [ExtensionAction.ID: [String]] = [:]
 +        if let first = actions.first, first.node.object("shortcut") == nil {
-+            result[first.id] = "↵"
++            result[first.id] = ["↵"]
 +        }
-+        if let second = secondaryAction(in: actions) { result[second.id] = "⌘↵" }
++        if let second = secondaryAction(in: actions) { result[second.id] = ["⌘", "↵"] }
 +        return result
 +    }
 +
